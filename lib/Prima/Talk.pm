@@ -1,0 +1,2293 @@
+use strict;
+use warnings;
+
+
+# XXX TODO LIST
+# Figure out why em-widths don't work well for toc width
+
+=head1 NAME
+
+Prima::Talk - a widget for rendering talks
+
+=head1 SYNOPSIS
+
+ use strict;
+ use warnings;
+ use Prima qw(Talk);
+ 
+ #########################
+ # Setup the Application #
+ #########################
+ 
+ # Border decorations for full-screen are os-dependent
+ my @border_args = (borderIcons => bi::SystemMenu);
+ @border_args = () if $^O =~ /MS/ or $^O =~ /cywin/i;
+ 
+ # Build the application, which will only contain
+ # our single talk widget
+ my $app = Prima::MainWindow->new(
+   text => 'My Talk',
+   
+   # Fill the screen:
+   place => { x => 0, relwidth => 1, y => 0,
+       relheight => 1, anchor => 'sw' },
+   
+   # Set the border decoerations as already specified:
+   @border_args,
+ );
+ 
+ my $talk = $app->insert(Talk =>
+   # Fill the application:
+   place => {
+     x => 0, relwidth => 1,
+     y => 0, relheight => 1,
+     anchor => 'sw',
+   },
+   
+   # Set the em-width relative to the container size
+   em_width => '2%width',
+   # Set the table of contents color to contrast
+   toc_color => cl::White,
+   toc_backColor => cl::Black,
+   # Relative widths and heights
+   toc_width => '12%width',
+   title_height => '10%height',
+   # Default background is Grey, fix that:
+   backColor => cl::White,
+ );
+
+=head1 DESCRIPTION
+
+This module provides something of a super widget whose purpose is to let you
+build a series of interactive slides. The content of the slides can include
+anything from simple text and pictures to customized transitions. You can
+even dictate the behavior of each transition dynamically, based on anything
+from the amount of time that has passed to values that have been entered in
+a widget that was placed on the slide. Indeed, you can include arbitrary
+widgets and interaction within each slide.
+
+There are a number of different ideas to get straight in understanding how
+these talks work. First, you have a C<Prima::Talk> widget. You create such a
+widget by saying something like:
+
+ my $talk = $window->insert(Talk =>
+   # Have the Talk fill the whole window:
+   place => {
+     x => 0, relwidth => 1,
+     y => 0, relheight => 1,
+     anchor => 'sw',
+   },
+   em_width => '2%width',         # Scale font width by screen size:
+   font => { name => 'Georgia' }, # Set to a nice font
+   logo => 'company-logo.jpg',    # upper-left corner
+   toc_width => '15%width',       # logo/table-of-contents width
+   toc_color => cl::White,        # color for table-of-contents text
+   toc_backColor => cl::Black,    # make table-of-contents contrast
+   backColor => cl::White,        #    against the main talk
+ );
+
+As you can see, there are many ways to configure your Talk, but I'll step
+over that for now. Another idea to get straight is that once you have your
+Talk object, you next need to add
+slides to it. You add slides with the L</add> method, in which you specify
+the class name of the slide object that you want added followed by key/value
+pairs that indicate the settings for the slide, and its content:
+
+ $talk->add(Slide =>
+   # Short phrase shown in the table of contents
+   toc_entry => 'Basic Question',
+   # Title displayed across the top of the screen
+   title => 'How do we segment weigh-in data?',
+   # Make the text on this slide a bit bigger
+   font_factor => 1.4,
+   # Specify the content of the slides
+   content => [
+     par => 'Regular weigh-in intervals:', # paragraph
+     bullets => [                          # set
+       'Identify break points',            #   of
+     ],                                    #     bullets
+     spacer => '0.5em',                    # spacer
+     par => 'Regular users with a few big gaps', # paragraph
+     bullets => [                          # set
+       'Identify regular sampling rate',   #   of
+       'Pick large gaps',                  #     more
+     ],                                    #       bullets
+     spacer => '0.5em',                    # another spacer
+     par => 'Users with mixed behavior',   # etc...
+     bullets => [
+       'Extract periods of regular behavior',
+     ],
+   ],
+ );
+
+The built-in classes for slides include L</Slide>, L</WideSlide>, L<Section>,
+and L</WideSection> (which cover at least 99% of my slide layout needs) as
+well as L</Emphasize> and L</WideEmphasize>. The important thing to realize
+about the slide types is that they specify how the slides interact with the
+table of contents and the title, but use the exact same content mechanisms.
+
+That brings me to content, and how to specify it. All slides should have a
+title. They should also specify a table-of-contents entry since the title is
+likely to be quite a bit longer than what would fit in the table-of-contents
+column. The other piece of content is an array ref associated with the
+C<content> key, as demonstrated above. The array ref should contain key/value
+pairs wherein the key indicates a content type and a value indicates some
+value that the content type expects, and knows how to render. For example,
+C<par> expects a single string of text which can include newlines and lots
+of whitespace. All whitespace is replaced with single spaces and the
+eventual text gets displayed with text wrapping, if necessary.
+
+Basic content types include par, spacer, bullets, image, two_column, plot,
+and subref. The last one give arbitrary code for adding custom one-off
+renderings, such as adding custom widgets to the slide. (If you need to do
+many similar renderings for the same slide, you should create a custom
+content type with a rendering subref under the Slide's [not the contens']
+key C<< render_<type> >>. If you need to do many similar renderings across
+many slides, define C<< Prima::Talk::Slide::render_<type> >>.)
+
+And finally we get to the last bit. Transitions are custom behaviors that
+happen every time the speaker hits the forward or back button. These
+behaviors do not need to advance to the next slide. In fact, they don't even
+need to behave in a set way each time. You specify transition behavior by
+either associating a subref with the Slide key C<transition>, or by
+associating a list of subrefs with the C<transitions> key. When called, all
+of these subrefs are passed the slide object and the direction of the
+transition. The difference between the two is how they handle advancing to
+the next (or previous) slide. For the single C<transition> subref, it must
+return a false value when you have no more transitions for your slide in the
+given direction (+1 for forward transitions, -1 for backward transitions).
+For the set of transitions, each one is called in order, and the return value
+is ignored.
+
+=cut
+
+use Prima qw(Label ImageViewer MsgBox FileDialog);
+use Prima::PS::Drawable;
+
+package Prima::Talk;
+# Primary package, which describes a widget that holds all the Talk data,
+# including the slide deck and the container widgets. This widget keeps
+# track of things like key combos for slide advance or rewind, and such
+
+our @ISA = qw(Prima::Widget);
+use Carp;
+use Prima::Utils qw(post);
+use Time::Piece;
+
+sub formatted_date {
+	# Calculate today's date with the specified format, use that for the footer
+	my $format = shift;
+	my $t = localtime;
+	return $t->strftime($format)
+}
+
+sub profile_default
+{
+	my %def = %{$_[ 0]-> SUPER::profile_default};
+
+	# These lines are somewhat patterned from the Prima example called 'editor'
+	my @acc = (
+		# Up/Left means previous slide
+		  ['', '', kb::Up, \&previous_slide]
+		, ['', '', kb::Left, \&previous_slide]
+		, ['', '', kb::PageUp, \&previous_slide]
+		# Down/Right means next slide
+		, ['', '', kb::Down, \&next_slide]
+		, ['', '', kb::Right, \&next_slide]
+		, ['', '', kb::PageDown, \&next_slide]
+		# Special clicker keys
+		, ['', '', kb::Esc, \&special_key]
+		, ['', '', kb::F5 | km::Shift, \&special_key]
+		# q to quite
+		, ['', '', ord('q'), sub { exit() } ]
+		# g for 'goto'
+		, ['', '', ord('g'), \&goto_slide_dialog ]
+		# p for "print"
+		, ['', '', ord('p'), \&print_current_slide ]
+	);
+	
+	my $day_of_month = formatted_date('%d');
+	$day_of_month =~ s/^0+//;
+	my $today = formatted_date("%A %B $day_of_month, %Y");
+	return {
+		%def,
+		accelItems => \@acc,
+		slides => [undef],
+		curr_slide => undef,
+		toc_indent => 20,
+		title_font_ratio => 2,
+		toc_backColor => cl::White,
+		toc_color => cl::Black,
+		padding => 10,
+		footer => [$today, '', '%s / %n'],
+		footer_height => '1.5em',
+		aspect_backColor => cl::Black,
+	}
+}
+
+sub goto_slide_dialog {
+	my $self = shift;
+	my $n_slides = $self->n_slides;
+	my $slide_number = $n_slides;
+	while($slide_number >= $n_slides) {
+		$slide_number = Prima::MsgBox::input_box( 'Goto...', "Slide number (1-$n_slides):", '');
+		return unless $slide_number =~ /^\d+$/;
+		$slide_number-- unless $slide_number == 0;
+	}
+	$self->slide($slide_number);
+}
+
+
+
+# working here - this does not quite work quite right. :-(
+sub print_current_slide {
+	# Get the filename as an argument, or from the save-as dialog.
+	my $self = shift;
+	my $filename;
+	
+	unless ($filename) {
+		my $save_dialog = Prima::SaveDialog-> new(
+			defaultExt => 'ps',
+			filter => [
+				['Postscript files' => '*.ps'],
+				['All files' => '*'],
+			],
+		);
+		# Return if they cancel out:
+		return unless $save_dialog->execute;
+		# Otherwise get the filename:
+		$filename = $save_dialog->fileName;
+	}
+	unlink $filename if -f $filename;
+	
+	# Create the postscript canvas
+	my $ps = Prima::PS::Drawable-> create( onSpool => sub {
+			open my $fh, ">>", $filename;
+			print $fh $_[1];
+			close $fh;
+		},
+		pageSize => [$self->size],
+		pageMargins => [0, 0, 0, 0],
+	);
+	$ps->resolution($self->resolution);
+	$ps->font(size => 16);
+	
+	# Initialize the canvas
+	$ps->begin_doc
+		or do {
+			my $message = "Error generating Postscript output: $@";
+			if (defined $::application) {
+				Prima::MsgBox::message($message, mb::Ok);
+				carp $message;
+				return;
+			}
+			else {
+				croak($message);
+			}
+		};
+	
+	# If we're good to go, draw on it
+	my @widgets = ($self);
+	while(@widgets) {
+		my $widget = shift @widgets;
+#		$widget->on_paint($ps);
+		$widget->begin_paint_info;
+		$widget->notify('Paint', $ps);
+		$widget->end_paint_info;
+		push @widgets, $widget->get_widgets;
+	}
+	
+	# Block until everything is done drawing
+	my $still_waiting = 1;
+	post(sub { $still_waiting = 0 });
+	$::application->yield while $still_waiting;
+	
+	$ps->end_doc;
+}
+
+sub aspect_place_spec {
+	my $self = shift;
+	# If they didn't specify an aspect, return a fully filled setup
+	return (x => 0, relwidth => 1, y => 0, relheight => 1, anchor => 'sw')
+		unless $self->{aspect};
+	
+	# If they did specify an aspect, we have some calculating to do.
+	my ($width, $height) = $self->size;
+	
+	if ($width / $height < $self->{aspect}) {
+		# Widget is taller than the desired aspect, so fill the width and
+		# pad the top and bottom
+		my $calc_height = $width / $self->{aspect};
+		
+		return (x => 0, relwidth => 1, anchor => 'sw',
+				y => ($height - $calc_height) / 2, height => $calc_height
+		);
+	}
+	else {
+		# Widget is wider than the desired aspect, so fill the height and
+		# pad the left and right
+		my $calc_width = $height * $self->{aspect};
+		return (y => 0, relheight => 1, anchor => 'sw',
+				x => ($width - $calc_width)/2, width => $calc_width
+		);
+	}
+}
+
+# optional:
+#
+# toc_width => sets logo width, too; default is 200
+# If you do not specify a title height, it is computed by stretching the
+# logo to fit in the toc_width. If you specify the title height, the logo is
+# shrunk so that fits within both the toc width and the title height,
+# preserving aspect ratio.
+# If you do not specify a logo or a title height, twice the title font
+# size is used.
+# If you do not specify a toc_width or title_height, but you do specify a
+# logo, the logo's dimensions are used for both.
+# If you do not specify anything, toc_width defaults to 16 x font-size
+# and title_height defaults to 2 x title-font-size
+
+# This stage initializes the talk. I believe this is the appropriate stage
+# for setting the properties above and creating the child widgets.
+sub init {
+	my $self = shift;
+	my %profile = $self->SUPER::init(@_);
+	
+	# Copy basic properties
+	for my $prop_name ( qw(
+		toc_indent toc_color toc_backColor title_font_ratio em_width footer
+		aspect
+	) ) {
+		$self->{$prop_name} = $profile{$prop_name};
+	}
+	
+	# Build the aspect-preserving container, which holds everything else.
+	# This must be the first thing to be built since some of the relative
+	# size specs depend on its existence.
+	my $aspect_container = $self->{aspect_container} = 
+			# Build the outermost container with the aspect back color,
+			# into which we will insert the aspect container
+			$self->insert(Widget =>
+				place => { x => 0, y => 0, relwidth => 1, relheight => 1, anchor => 'sw'},
+				color => $profile{aspect_backColor},
+				backColor => $profile{aspect_backColor},
+			)->insert(Widget =>
+		color => $self->color,
+		backColor => $self->backColor,
+		place => {$self->aspect_place_spec},
+	);
+	
+	# The font size may be in terms of the width or height, so it cannot be
+	# (re)set until the aspect container has been built.
+	$self->reset_font_size;
+	# Keep the aspect container's font size in line, too:
+	$aspect_container->font->size($self->font->size);
+	
+	# Run the footer height through the spec
+	my $footer_height = $self->footer_height($profile{footer_height});
+	$self->footer(@{$profile{footer}});
+	
+	# set the toc_height based on the current font height
+	$self->{toc_height} = $self->font->{size} * 1.75;
+	
+	# if they specified a toc_width or title_height, use it
+	$self->{toc_width} = $profile{toc_width} if exists $profile{toc_width};
+	$self->{title_height} = $profile{title_height}
+		if exists $profile{title_height};
+	
+	# Load the logo
+	my $logo;
+	if ($profile{logo}) {
+		$logo = $self->{logo} = Prima::Image->load($profile{logo})
+			or carp("Unable to load logo $profile{logo}");
+	}
+	
+	# Calculate the width of the table of contents and the title height,
+	# in pixels
+	my ($toc_width, $title_height) = $self->calculate_decorator_dims;
+	
+	# Add the logo or a blank space
+	my @logo_options = (
+		place => {
+			x => 0, width => $toc_width,
+			rely => 1, y => -$title_height, height => $title_height,
+			anchor => 'sw',
+		},
+		color => $self->{toc_color},
+		backColor => $self->{toc_backColor},
+	);
+	if (defined $logo) {
+		my $zoom = $toc_width / $logo->width;
+		$zoom = $title_height / $logo->height
+				if $title_height / $logo->height < $zoom;
+		$self->{logo_widget} = $aspect_container->insert(ImageViewer =>
+			@logo_options,
+			image => $logo,
+			zoom => $zoom,
+			alignment => ta::Center,
+			valignment => ta::Middle,
+		);
+	}
+	else {
+		$self->{logo_widget} = $aspect_container->insert(Widget => @logo_options);
+	}
+	
+	# Add the title label
+	$self->{title_label} = $aspect_container->insert(Label => 
+		place => {
+			x => $toc_width, width => -$toc_width, relwidth => 1, 
+			rely => 1, y => -$title_height,
+			height => $title_height, anchor => 'sw',
+		},
+		width => $aspect_container->width - $toc_width,
+		color => $self->{toc_color},
+		backColor => $self->{toc_backColor},
+		valignment => ta::Middle,
+		alignment => ta::Center,
+	);
+	$self->{title_label}->font->size(
+		$self->{title_label}->font->size * $self->{title_font_ratio} );
+	
+	# Add the lower container
+	my $lower_container = $self->{lower_container}
+		= $aspect_container->insert(Widget =>
+		place => {
+			x => 0, relwidth => 1,
+			y => 0, relheight => 1, height => -$title_height,
+			anchor => 'sw',
+		},
+		color => $self->color,
+		backColor => $self->backColor,
+	);
+	my $padding = $self->{padding} = $profile{padding};
+	# Add the main container
+	$self->{main_container} = $lower_container->insert(Widget =>
+		place => {
+			x => $toc_width + $padding, relwidth => 1,
+			width => -$toc_width - 2 * $padding,
+			y => $padding + $footer_height, relheight => 1,
+			height => -2*$padding - $footer_height,
+			anchor => 'sw',
+		},
+		width => $self->width - $toc_width - 2*$padding,
+		color => $self->color,
+		backColor => $self->backColor,
+	);
+	
+	# Add the toc widget
+	$self->{toc_widget} = $lower_container->insert(Widget =>
+		place => {
+			x => 0, width => $toc_width,
+			y => 0, relheight => 1,
+			anchor => 'sw',
+		},
+		color => $profile{toc_color},
+		backColor => $profile{toc_backColor},
+	);
+	
+	$self->{footer_widget} = $lower_container->insert(Widget =>
+		place => {
+			x => $toc_width + $padding, relwidth => 1,
+			width => -$toc_width - 2 * $padding,
+			y => 0, height => $footer_height,
+			anchor => 'sw',
+		},
+		buffered => 1,
+		color => $profile{toc_color},
+		backColor => $profile{toc_backColor},
+		onPaint => sub {
+			my $footer_widget = shift;
+			return if not $self->footer_visible;
+			
+			$footer_widget->begin_paint;
+			$footer_widget->clear;
+			my $height = $self->footer_height;
+			my $font_height = $self->font->height;
+			my $vert_offset = ($height - $font_height) / 2;
+			
+			# Paint left footer
+			my ($left_text, $center_text, $right_text) = $self->footer;
+			if ($left_text ne '') {
+				my $to_paint = $self->process_footer_text($left_text);
+				$footer_widget->text_out($to_paint, $padding, $vert_offset);
+			}
+			if ($center_text ne '') {
+				my $to_paint = $self->process_footer_text($center_text);
+				my $width = $footer_widget->get_text_width($to_paint);
+				my $x = ($footer_widget->width - $width) / 2;
+				$footer_widget->text_out($to_paint, $x, $vert_offset);
+			}
+			if ($right_text ne '') {
+				my $to_paint = $self->process_footer_text($right_text);
+				my $width = $footer_widget->get_text_width($to_paint);
+				my $x = $footer_widget->width - $width - $padding;
+				$footer_widget->text_out($to_paint, $x, $vert_offset);
+			}
+			$footer_widget->end_paint;
+		},
+	);
+	
+	# Add the table of contents labels 
+	$self->build_toc;
+
+	# Set the slides
+	$self->slides(@{$profile{slides}});
+	
+	# Set the current slide
+	$self->{curr_slide} = undef;
+	if ($self->n_slides > 0 and defined $profile{curr_slide}) {
+		$self->slide($profile{curr_slide});
+	}
+	
+	return %profile;
+}
+
+# the aspect ratio needs to be adjusted if the container is resized.
+sub on_size {
+	my ($self, undef, undef, $width, $height) = @_;
+	$self->{aspect_container}->place($self->aspect_place_spec);
+	
+	# See if the font needs recalibrating
+	if ($self->{em_width} and $self->{em_width} =~ /%/) {
+		$self->reset_font_size;
+		$self->{title_label}->font->size(
+			$self->font->size * $self->{title_font_ratio}
+		);
+	}
+
+	# Update the layout
+	my ($toc_width, $title_height) = $self->calculate_decorator_dims;
+	# Logo
+	$self->{logo_widget}->place(
+			x => 0, width => $toc_width,
+			rely => 1, y => -$title_height, height => $title_height,
+			anchor => 'sw',
+	);
+	# Title
+	$self->{title_label}->place(
+			x => $toc_width, width => -$toc_width, relwidth => 1, 
+			rely => 1, y => -$title_height,
+			height => $title_height, anchor => 'sw',
+	);
+	$self->{title_label}->width($width - $toc_width);
+	# Lower container
+	$self->{lower_container}->place(height => -$title_height);
+	# Update the widths of the table of contents, main container, footer
+	$self->toc_visible($self->toc_visible);
+	$self->update_footer;
+	
+	# Update the table of contents widget
+	my $toc_widget = $self->{toc_widget};
+	$toc_widget->width($toc_width);
+	$toc_widget->place( x => 0, width => $toc_width );
+	for my $toc_container ($toc_widget->get_widgets) {
+		$toc_container->width($toc_width);
+		#$toc_container->place( x => 0, width => $toc_width );
+		for my $label ($toc_container->get_widgets) {
+			$label->width($toc_width);
+			$label->place( x => 0, width => $toc_width );
+		}
+	}
+}
+
+sub reset_font_size {
+	my $self = shift;
+	
+	# Don't do anythin if there is no specification
+	return unless $self->{em_width};
+	
+	my $em_width = $self->{em_width};
+	if ($em_width =~ /em$/) {
+		carp('Cannot specify the em-width in terms of em-widths! Ignoring em-width spec.');
+		return;
+	}
+	elsif ($em_width =~ s/\%col(\w+)/\%$1/) {
+		carp("Cannot specify the em-width in terms of \%col$1. Using \%$1 instead");
+	}
+	
+	# Change the font size to the requested size; assumes that the size of M
+	# grows linearly with font size, which may not always be correct
+	my $current_em = $self->calculate_size(current_em_width => '1em');
+	my $new_em = $self->calculate_size(em_width => $em_width);
+	
+	$self->font->size($self->font->size * $new_em / $current_em);
+}
+
+=head2 calculate_size
+
+Semi-internal method that computes pixel sizes for a given size
+specification.
+
+working here - document different size specs; consider allowing special
+specs that can be added as the user sees fit, just like special rendering
+and special footer field extensions
+
+This method expects two argments, the size spec to be processed and an
+optional container whose dimensions should be used for the column height
+and width calculations.
+
+=cut
+
+sub calculate_size {
+	my ($self, $name, $size, $container) = @_;
+	
+	# Plain digits means pixels; pixel spec can simply have the px stripped
+	return $size if $size =~ /^\d+(\.\d*)?$/ or $size =~ s/px$//;
+	
+	
+	# Percent of talk height
+	return $size / 100 * $self->{aspect_container}->height
+		if $size =~ s/\%height$//;
+	
+	# Percent of talk width
+	return $size / 100 * $self->{aspect_container}->width
+		if $size =~ s/\%width$//;
+	
+	# Multiples of the width of the letter 'M'
+	return $size * $self->get_text_width('M') if $size =~ s/em$//;
+	
+	# Croak if column specs are not allowed
+	croak("Column $1 is not allowed for $name specification")
+		if not defined $container and $size =~ /\%col(\w+)/;
+	
+	# Percent of the column height or width
+	return $size * $container->height / 100 if $size =~ s/\%colheight$//;
+	return $size * $container->width / 100  if $size =~ s/\%colwidth$//;
+	
+	croak("Unknown $name size specification $size");
+}
+
+=head2 calculate_decorator_dims
+
+This semi-internal method can be used any time after the Talk object has
+been initialized. It computes and returns two numbers: the width of the
+table of contents and the height of the title bar. It does this by processing
+the combination of an optional logo's dimensions and optional specifications
+for the title height and the table of contents' width. All of these sorts of
+things are based on data that are internal to the object, and typically only
+change when the window gets resized. The logic is not very simple, which is
+why it is encapsulated in this one function. It works as follows:
+
+If specifications for the height and width were passed to the constructor,
+their sizes are computed and returned. Relative sizes, such as C<'10em'>
+or C<'12%width'>, can be used. If there is no logo, default dimensions of
+C<'15%width'> and C<'15%height'> are used for the height and width,
+respectively.
+
+If there is a logo and one of the dimensions are specified, the logo's
+size in pixels is used. This is not generally recommended because it will
+occupy diferent fractions of the screen for different screen resolutions,
+and will remain fixed even when the presentation gets resize. For this
+reason, you can specify just one of the dimensions in which case the logo's
+aspect ratio is used to determine the size of the other dimension.
+
+=cut
+
+sub calculate_decorator_dims {
+	my $self = shift;
+	
+	# Easy case: both dims are explicitly specified
+	if ($self->{toc_width} and $self->{title_height}) {
+		return (
+			$self->calculate_size(toc_width => $self->{toc_width}),
+			$self->calculate_size(title_height => $self->{title_height})
+		)
+	}
+	
+	# Moving forward, no more than one of the dims is specified
+	
+	# Easy case: logo but no dims
+	return $self->{logo}->size if $self->{logo}
+				and not $self->{toc_width} and not $self->{title_height};
+	
+	# No logo is also fairly simple; unspecified dims revert to defaults
+	if (not $self->{logo}) {
+		my $toc_width = $self->{toc_width} || '15%width';
+		my $title_height = $self->{toc_height} || '15%height';
+		return (
+			$self->calculate_size(toc_width => $toc_width),
+			$self->calculate_size(title_height => $title_height)
+		);
+	}
+	
+	# At this point we have a logo and only one of the dimensions. Use the
+	# logo's aspect ratio to compute the size of the other dimension.
+	
+	my $logo_aspect = $self->{logo}->width / $self->{logo}->height;
+	if ($self->{toc_width}) {
+		my $width_px = $self->calculate_size(toc_width => $self->{toc_width});
+		my $height_px = $width_px / $logo_aspect;
+		return ($width_px, $height_px);
+	}
+	
+	my $height_px = $self->calculate_size(title_height => $self->{title_height});
+	my $width_px = $height_px * $logo_aspect;
+	return ($width_px, $height_px);
+}
+
+=head2 footer_height
+
+Gets or sets the footer height. Called as a getter in scalar context returns
+the height in pixels. Called as a getter in array context returns first the
+pixel height, then the height spec, which is explained below. Called as a
+setter, it sets the height.
+
+Allowed height specifications are numbers, which are translated as pixel
+heights, or strings with special endings. Special endings include C<"px">,
+which means this is a pixel height, C<"%">, which means this height is a 
+percentage of the full talk's vertical height, and C<"em">, which means this
+height is a multiple of the width of the widget's letter C<"M">. Pixel
+heights must be larger than 5 pixels, percentage heights can be anything
+between 1% and 15%, and em-heights can be anything between 0.5em and 5em.
+
+A height of 0 indicates that you do not want a footer.
+
+=cut
+
+sub footer_height {
+	my $self = shift;
+	
+	# Called as getter
+	if (@_ == 0) {
+		# Return the height and the height-string if called in array context
+		return ($self->{footer_height_px}, $self->{footer_height})
+				if wantarray;
+		# Return the height in pixels if called in scalar context
+		return $self->{footer_height_px};
+	}
+	
+	# Called as setter; determine the height and check for sanity
+	my $height = $self->{footer_height} = shift;
+	
+	my $min_height = 5;
+	my $max_height = $self->calculate_size(max_footer_height => '15%height');
+	my $height_px = $self->calculate_size(footer_height => $height);
+	
+	# Store the height, in case 
+	if ($height_px > 0 and $height_px < $min_height) {
+		warn("Footer height too small; enlarging to ${min_height}px\n");
+		$height_px = $min_height;
+	}
+	elsif ($height_px > $max_height) {
+		warn("Footer height too large; shrinking to 15\%height\n");
+		$height_px = $max_height;
+	}
+	
+	# Set the widget height; don't adjust the footer or container; that will
+	# happen with the call to update_footer
+	$self->{footer_height_px} = $height_px;
+}
+
+=head2 footer
+
+Gets or sets the footer text. The footer has three distinct regions: left,
+center, and right. When called in getter mode, this returns three elements,
+corresponding to the three elements of the footer. When called in setter
+mode, this method expects between one and three arguments corresponding to
+the desired left, center, and right footer texts. If you want to clear a
+footer element, set it to the empty string. If do not want to change an
+element's text, pass in the undefined value for that place in the array.
+
+The strings allow for some basic field interpretation, and the field
+interpretation can be extended by subclassing. If your footer string includes
+the string C<'%s'>, the current slide number will be put in its place. The
+string C<'%n'> will be replaced with the total number of slides. The string
+C<'%%'> will be replaced with a single percent sign. You can add new fields
+by adding methods called C<footer_field_LETTER>, where the letter is what
+you want to override, or by adding anonymous subroutines to your talk object
+with the associated name. When the footer updater gets called, it will call
+your new method if it encounters C<"%LETTER"> in any of your footer strings.
+
+For example:
+
+ # Sets the left and center footers to blank,
+ # right footer to current-slide / slide-count
+ $talk->footer('', '', '%s / %n');
+ 
+ # Changes the center footer to my name
+ $talk->footer(undef, 'David Mertens', undef);
+ 
+ # Gets the current footer text strings
+ my ($left, $center, $right) = $talk->footer;
+ 
+ # Add something to render the author name
+ $talk->{footer_field_a} = sub {
+	 return 'David Mertens'
+ }
+ 
+ # Use the new footer field
+ $talk->footer(undef, '%a', undef);
+
+
+=cut
+
+sub footer {
+	my $self = shift;
+	my @footer = @{$self->{footer}};
+	return @footer if @_ == 0;
+	
+	my ($left, $center, $right) = @_;
+	$footer[0] = $left if defined $left;
+	$footer[1] = $center if defined $center;
+	$footer[2] = $right if defined $right;
+}
+
+sub footer_field_s {
+	my $slide_number = $_[0]->slide;
+	return '---' unless defined $slide_number;
+	return $slide_number + 1;
+}
+
+sub footer_field_n {
+	return $_[0]->n_slides;
+}
+
+sub process_footer_text {
+	my ($self, $text) = @_;
+	
+	# Split the text on footer fields
+	my @elements = split /(%.)/, $text;
+	
+	# Build the return string
+	my $to_return = '';
+	for my $element (@elements) {
+		if ($element eq '%%') {
+			$to_return .= '%';
+		}
+		elsif ($element =~ /^%(.)$/) {
+			my $char = $1;
+			if (my $subref = $self->can("footer_field_$char")) {
+				$to_return .= $subref->($self);
+			}
+			elsif (exists $self->{"footer_field_$char"}) {
+				$to_return .= $self->{"footer_field_$char"}->($self);
+			}
+			else {
+				carp("No method for interpreting $element");
+				$to_return .= $element;
+			}
+		}
+		else {
+			$to_return .= $element;
+		}
+	}
+	return $to_return;
+}
+
+=head2 footer_left
+
+Gets or sets the left footer text. See above for more details.
+
+=cut
+
+sub footer_left {
+	return $_[0]->{footer}->[0] if @_ == 1;
+	$_[0]->footer($_[1], undef, undef);
+}
+
+=head2 footer_right
+
+Gets or sets the right footer text. See above for more details.
+
+=cut
+
+sub footer_right {
+	return $_[0]->{footer}->[2] if @_ == 1;
+	$_[0]->footer(undef, undef, $_[1]);
+}
+
+=head2 footer_center
+
+Gets or sets the center footer text. See above for more details.
+
+=cut
+
+sub footer_center {
+	return $_[0]->{footer}->[1] if @_ == 1;
+	$_[0]->footer(undef, $_[1], undef);
+}
+
+# adjust the footer dimenaions and call the paint method
+sub update_footer {
+	my $self = shift;
+	my $footer_widget = $self->{footer_widget};
+	$footer_widget->height($self->{footer_height_px});
+	$footer_widget->notify("Paint");
+}
+
+=head2 container
+
+Returns the main container object, into which slide contents should be added.
+
+=cut
+
+sub container {
+	return $_[0]->{main_container};
+}
+
+=head2 toc_width
+
+Gets/sets the table-of-contents container width. In set mode, triggers a
+slide redraw. In get mode, the scalar return value is computed width in
+pixels; in list context it retrns the computed width followed by the width
+spec string.
+
+=cut
+
+sub toc_width {
+	my $self = shift;
+	# Called as getter
+	if (@_ == 0) {
+		my ($width) = $self->calculate_decorator_dims;
+		return $width;
+	};
+	# Called as setter
+	$self->toc_width_spec(@_);
+}
+
+sub toc_width_spec {
+	my $self = shift;
+	return $self->{toc_width} if @_ == 0;
+	
+	# If called as a setter, calculate the pixel size and redraw everything
+	$self->{toc_width} = my $width = shift;
+	$self->notify("Size", $self->size, $self->size);
+	
+	# Issue  reslide
+	$self->reslide;
+	
+}
+
+=head2 toc_indent
+
+Gets/sets the table-of-contents' indentation, i.e. the indentation used when
+displaying the slides under the current section. In set mode, this triggers
+a redraw of the table of contents, but not the slide itself.
+
+=cut
+
+sub toc_indent {
+	return $_[0]->{toc_indent} if @_ == 1;
+	my ($self, $indent) = @_;
+	$self->{toc_indent} = $indent;
+	
+	$self->update_toc;
+}
+
+=head2 toc_visible
+
+Getter/setter that indicates whether or not the table of contents should be
+shown or not. This does B<not> issue a slide redraw as it it is expected to
+be used primarily during the setup of a given slide.
+
+=cut
+
+sub toc_visible {
+	my $self = shift;
+	return $self->{toc_visible} if @_ == 0;
+	
+	my $is_visible = $self->{toc_visible} = $_[0];
+	
+	# Update the size of the main container (which already has relwidth of 1)
+	my ($toc_width) = $self->calculate_decorator_dims;
+	my $padding = $self->{padding};
+	if ($is_visible) {
+		$self->container->place(
+			x => $toc_width + $padding, relwidth => 1,
+			width => -$toc_width - 2 * $padding,
+		);
+		$self->{footer_widget}->place(
+			x => $toc_width, relwidth => 1,
+			width => -$toc_width,
+		);
+	}
+	else {
+		$self->container->place(
+			x => $padding, relwidth => 1,
+			width => -2 * $padding,
+		);
+		$self->{footer_widget}->place(x => 0, relwidth => 1, width => 0);
+	}
+	
+	# Set the visibility of the toc widget
+	$self->{toc_widget}->visible($is_visible);
+	
+	return $is_visible;
+}
+
+sub footer_visible {
+	my $self = shift;
+	return $self->{footer_visible} if @_ == 0;
+	
+	my $is_visible = $self->{footer_visible} = $_[0];
+	
+	# Update the size of the main container (which already has relheight of 1)
+	my $padding = $self->{padding};
+	if ($is_visible) {
+		my $height = $self->footer_height;
+		$self->container->place( y => $height + $padding, relheight => 1,
+				height => -$height - 2 * $padding);
+	}
+	else {
+		$self->container->place( y => $padding, height => -2 * $padding
+				, relheight => 1);
+	}
+	
+	# Set the visibility of the toc widget
+	$self->{footer_widget}->visible($is_visible);
+	
+	return $is_visible;
+}
+
+=head2 reslide
+
+Redraws the current slide, if the current selection is defined.
+
+=cut
+
+sub reslide {
+	my $self = shift;
+	my $curr_slide = $self->{curr_slide};
+	if (defined $curr_slide) {
+		my $slide = $self->{slides}->[$curr_slide];
+		$slide->tear_down;
+		$slide->setup;
+	}
+}
+
+=head2 n_slides
+
+Read-only accessor that returns the number of slides in the deck.
+
+=cut
+
+sub n_slides {
+	carp('n_slides is a read-only property') unless @_ == 1;
+	return scalar (@{$_[0]->{slides}});
+}
+
+=head2 slide
+
+Gets or sets the offset of the currently viewed slide. In set mode, causes
+the slide contents to change. Slide counting starts from zero and negative
+offsets are allowed.
+
+Setting the current slide to C<undef> is allowed, in which case the current
+slide (if any) is torn down, but no slide is selected for display. In other
+words, C<< $talk->slide(undef) >> is a simple way to invoke the current
+slide's tear-down method while keeping the deck's state intact.
+
+=cut
+
+sub slide {
+	# Handle the getter case
+	return $_[0]->{curr_slide} if @_ == 1;
+	
+	# The rest is for the setter case
+	
+	my ($self, $number) = @_;
+	
+	# Handle the special case of undef, in which case we simply tear down
+	# the currently selected slide, if any.
+	if (not defined $number) {
+		$self->slides->[$self->{curr_slide}]->tear_down
+			if defined $self->{curr_slide};
+		$self->{curr_slide} = undef;
+		return;
+	}
+	
+	# Ensure we have some slides in our deck
+	if ($self->n_slides == 0) {
+		carp('slide called on a deck that had no slides (yet?)');
+		return;
+	}
+	
+	# Make sure the request is within range, neither too big nor too negative
+	if ($self->n_slides < $number) {
+		carp("Requested slide offset ($number) too big; truncating to "
+			. $self->n_slides - 1);
+		$number = -1;
+	}
+	if ($number + $self->n_slides < 0) {
+		carp("Requested negative slide offset ($number) too big (negative); "
+			. 'truncating to 0');
+		$number = 0;
+	}
+	
+	# Allow negative slide offsets, which count from the end
+	$number += $self->{n_slides} if $number < 0;
+	
+	# Call the current slide's cleanup method
+	my @slides = $self->slides;
+	if (defined $self->{curr_slide}) {
+		$slides[$self->{curr_slide}]->tear_down;
+	}
+	
+	# Set up this slide and save the current slide number
+	$slides[$number]->setup;
+	$self->{curr_slide} = $number;
+	
+	# Update the table of contents and footer
+	$self->update_toc;
+	$self->update_footer;
+}
+
+=head2 title_font_ratio
+
+Get/set the title font ratio, the ratio of the title font to the normal font.
+
+=cut
+
+sub title_font_ratio {
+	return $_[0]->{title_font_ratio} if @_ == 1;
+	$_[0]->{title_font_ratio} = $_[1];
+}
+
+=head2 build_toc
+
+Function to build the initial structure of the table of contents.
+
+=cut
+
+sub build_toc {
+	my $self = shift;
+	
+	# Add a bit of padding on the top and side
+# working here - use the same padding as for basic container?
+	$self->{toc_widget}->insert(Widget =>
+		pack => { side => 'top', fill => 'x' },
+		width => $self->toc_width,
+		height => 5,
+		color => $self->{toc_color},
+		backColor => $self->{toc_backColor},
+	);
+	$self->{toc_widget}->insert(Widget =>
+		pack => { side => 'left', fill => 'y' },
+		width => 5,
+		color => $self->{toc_color},
+		backColor => $self->{toc_backColor},
+	);
+	$self->grow_toc(40);
+}
+
+=head2 grow_toc
+
+Grows the table of contents by the given number of labels.
+
+=cut
+
+use Prima::PodView;   # Need this for the hand icon
+sub grow_toc {
+	my ($self, $n_to_add) = @_;
+	my $toc_widget = $self->{toc_widget};
+	my $toc_width = $self->toc_width;
+	for (1..$n_to_add) {
+		# Add the basic container
+		my $toc_label_container = $toc_widget->insert(Widget =>
+			pack => { side => 'top', fill => 'x', },
+			color => $self->{toc_color},
+			backColor => $self->{toc_backColor},
+			height => $self->{toc_height},
+		);
+		# Create a hash of coderefs that we can later manipulate as
+		# necessary
+		my %toc_callbacks = (
+			click => sub {},
+		);
+		# Add the label
+		push @{$self->{toc_labels}}, $toc_label_container->insert(Label =>
+			place => {
+				x => 0, width => $toc_width,
+				y => 0, relheight => 1,
+				anchor => 'sw',
+			},
+#		push @{$self->{toc_labels}}, $toc_widget->insert(Label =>
+			width => $toc_width,
+			pack => { side => 'top', fill => 'x' },
+			pointer => $Prima::PodView::handIcon,
+			color => $self->{toc_color},
+			backColor => $self->{toc_backColor},
+#			autoHeight => 1,
+#			wordWrap => 1,
+			onMouseEnter => sub { $_[0]->font->style(fs::Underlined) },
+			onMouseLeave => sub { $_[0]->font->style(fs::Normal) },
+			onMouseClick => sub { $toc_callbacks{click}->() },
+#			label_container => $toc_label_container,
+		);
+		# Add the coderef hash
+		push @{$self->{toc_callbacks}}, \%toc_callbacks;
+	}
+}
+
+=head2 update_toc
+
+Redraws the current slide's table of contents.
+
+=cut
+
+sub generate_toc_label_properties {
+	my ($self, $label, $label_offset, $slide_data, $width, $is_current) = @_;
+	my $toc_width = $self->toc_width;
+	
+	$label->text($slide_data->{name});
+	$label->place( x => $width, width => $toc_width - $width );
+	$label->width($toc_width - $width);
+	$self->{toc_callbacks}[$label_offset]->{click} = sub {
+		$self->slide($slide_data->{slide_offset});
+	};
+	
+	if ($is_current) {
+		$label->backColor($self->backColor);
+		$label->color($self->color);
+	}
+	else {
+		$label->backColor($self->{toc_backColor});
+		$label->color($self->{toc_color});
+	}
+}
+
+sub empty_label_properties {
+	my ($self, $label, $offset) = @_;
+	$label->text('');
+	$self->{toc_callbacks}[$offset]->{click} = sub {};
+	$label->backColor($self->{toc_backColor});
+	$label->color($self->{toc_color});
+}
+
+sub update_toc {
+	my $self = shift;
+	
+	# Nothing to do if the toc is not visible, there is not currently
+	# selected slide, or there are no slides
+	return if not $self->toc_visible or not defined $self->slide
+		or 0 == $self->n_slides;
+	
+	# Display all the section titles, showing the slide titles only for
+	# slides that are in this section.
+	my @sections = @{$self->{sections}};
+	
+	# Add new toc entries
+	my $slide_offset = $self->slide;
+	my $toc_indent = $self->toc_indent;
+	my $label_offset = 0;
+	
+	for my $section (@sections) {
+		
+		# Make sure we have enough labels lying around
+		$self->grow_toc(5) if @{$self->{toc_labels}} == $label_offset;
+		
+		# Add this section's title to the toc
+		my $section_label = $self->{toc_labels}->[$label_offset];
+		$self->generate_toc_label_properties($section_label, $label_offset,
+			$section, 0, $slide_offset == $section->{slide_offset});
+		
+		$label_offset++;
+		
+		# if this is the current section and it has sub-slides, add them
+		if (exists $section->{sub_slides}
+				&& $section->{slide_offset} <= $slide_offset
+				&& $section->{slide_offset} + @{$section->{sub_slides}} >= $slide_offset
+		) {
+			for my $slide (@{$section->{sub_slides}}) {
+				# Make sure we have enough labels lying around
+				$self->grow_toc(5) if @{$self->{toc_labels}} == $label_offset;
+				
+				my $slide_label = $self->{toc_labels}->[$label_offset];
+				$self->generate_toc_label_properties($slide_label,
+					$label_offset, $slide, $toc_indent,
+					$slide_offset == $slide->{slide_offset}
+				);
+				
+				$label_offset++;
+			}
+		}
+	}
+	
+	while ($label_offset < @{$self->{toc_labels}}) {
+		$self->empty_label_properties($self->{toc_labels}->[$label_offset],
+			$label_offset);
+		$label_offset++;
+	}
+}
+
+=head2 previous_slide
+
+Rewinds the talk to the previous slide in the deck
+
+=cut
+
+sub previous_slide {
+	my $self = shift;
+	
+	# Get the current slide
+	my $curr_slide_offset = $self->slide;
+	
+	# Do nothing if we do not have a defined slide
+	return unless defined $curr_slide_offset;
+	
+	# Check if the current slide can transition back, and return if so
+	my @slides = $self->slides;
+	return if $slides[$curr_slide_offset]->transition(-1);
+	
+	# Do nothing if currently at the first slide
+	return if $curr_slide_offset == 0;
+	
+	# Rewind one
+	$self->slide($curr_slide_offset - 1);
+}
+
+=head2 next_slide
+
+Advances the talk to the next slide in the deck
+
+=cut
+
+sub next_slide {
+	my $self = shift;
+	
+	# Get the current slide
+	my $curr_slide_offset = $self->slide;
+	
+	# Advance to the first slide if we're currently undefined
+	return $self->slide(0) if not defined $curr_slide_offset;
+	
+	# Check if the current slide can transition forward, and return if so
+	my @slides = $self->slides;
+	return if $slides[$curr_slide_offset]->transition(1);
+	
+	# Do nothing if currently at the last slide
+	return if $curr_slide_offset == $self->n_slides - 1;
+	
+	# Advance one
+	$self->slide($curr_slide_offset + 1);
+}
+
+=head2 special_key
+
+Calls the "special_key" callback for the given slide, if one exists.
+
+=cut
+
+sub special_key {
+	my $self = shift;
+	
+	# Get the current slide; exit if it doesn't make sense
+	my $curr_slide_offset = $self->slide;
+	return unless defined $curr_slide_offset;
+	
+	# Get the current slide and call its callback
+	my $curr_slide = ($self->slides)[$curr_slide_offset]->special_key;
+}
+
+=head2 slides
+
+Getter/setter for the list of slides. Returns an array of slide objects if
+called without any arguments. If called with arguments, all arguments are
+assumed to be slides, the collection of which becomes the slide deck.
+
+Clears the slide deck if called with a single undef. Note that clearing a
+deck does not ensure that the slides are destroyed.
+
+=cut
+
+sub slides {
+	my ($self, @slides) = @_;
+	
+	# Getter case
+	return @{$self->{slides}} if @slides == 0;
+	
+	# Special setter case---array with only one undef element---clears out
+	# the slides.
+	if (@slides == 1 and not defined $slides[0]) {
+		$self->{slides} = [];
+		$self->{curr_slide} = undef;
+		return;
+	}
+	
+	# Generic setter case: make sure the slides are OK before finalizing
+	for my $slide (@slides) {
+		eval {
+			$slide->slide_deck($self);
+			1;
+		} or do {
+			croak("Slide [$slide] could not be added to the deck: $@");
+		}
+	}
+	
+	# Tear down the current slide
+	my $curr_slide = $self->slide;
+	$self->slide(undef);
+	
+	# Assign the list of slides
+	$self->{slides} = \@slides;
+	
+	# Parse the slides into the section/slide nested structure
+	# Run through all the slides, gathering toc titles and parsing section
+	# structure. Each entry is an anonymous hash with:
+	# {
+	#	name => 'name-for-toc',
+	#	slide_offset => slide-list-offset-number,
+	#	sub_slides => [],
+	# }
+	
+	my @sections;
+	my $curr_section_list = \@sections;
+	for (my $i = 0; $i < @slides; $i++) {
+		my $slide = $slides[$i];
+		my %details = (
+			name => $slide->toc_entry,
+			slide_offset => $i,
+		);
+		
+		# If we encounter a section, wrap-up the current section
+		if ($slide->isa('Prima::Talk::Section')) {
+			$curr_section_list = $details{sub_slides} = [];
+			push @sections, \%details;
+		}
+		else {
+			push @$curr_section_list, \%details;
+		}
+	}
+	$self->{sections} = \@sections;
+	
+	# Go to the selected slide
+	if (defined $curr_slide) {
+		$curr_slide = $#slides if @slides < $curr_slide;
+		$self->slide($curr_slide);
+	}
+}
+
+=head2 add
+
+Adds a new slide. This accepts two kinds of arguments. Slide objects are
+appended to the deck, and a class => constructor-key/value pairs leads to a
+slide object of the specified class that is built with the arguments passed
+in the hashref. Note that the class name can be either a full class name, or
+a class name to which C<Prima::Talk::> should be appended. For example, both
+C<Prima::Talk::Slide> and simply C<Slide> can be used to build a new slide.
+You can achieve the same end with the C<slides> method, but this makes things
+easier.
+
+For example:
+
+ my $talk = Prima::Talk->new;
+ my $title_slide = Prima::Talk::Title->new('Title', 'David Mertens');
+ $talk->add($title_slide);
+ $talk->add(Section =>
+     # key/value Prima::Talk::Section spcification here
+ );
+ $talk->add(Slide =>
+     # key/value spec for the Prima::Talk::Slide object
+ );
+ $talk->add(Slide =>
+     # key/value spec for another Prima::Talk::Slide
+ );
+
+=head2 Prima::Talk::DONT_ADD
+
+This is global variable that, when set to true, turns L</slide> into a
+no-op. This is quite useful when you are working through the writing stage
+of your talk. If you are building a set of slides and are constantly
+switching between editing and viewing, it is handy to disable a set of
+slides. Consider starting with this set of slides:
+
+ $talk->add(Slide =>
+   ... content for first slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for second slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for third slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... CURRENTLY WORKING HERE ...
+ );
+
+To disable the rendering for the first three slides you simply surround
+them with a block and localize C<Prima::Talk::DONT_ADD> to a true value:
+
+ {  # open an block so the localization works correctly
+ 
+ local $Prima::Talk::DONT_ADD = 1;
+ 
+ $talk->add(Slide =>
+   ... content for first slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for second slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for third slide ...
+ );
+ 
+ }  # close the block; re-enable slide addition
+ 
+ $talk->add(Slide =>
+   ... CURRENTLY WORKING HERE ...
+ );
+
+=cut
+
+use Scalar::Util qw(blessed);
+
+sub add {
+	return if $Prima::Talk::DONT_ADD;
+	my $self = shift;
+	
+	# exit if no argument
+	if (@_ == 0) {
+		carp('Talk::add called with no slides to add');
+		return;
+	}
+	
+	# Did they supply a collection of slides?
+	if (blessed($_[0]) and $_[0]->isa('Prima::Talk::Slide')) {
+		# Make sure everything is a slide object
+		my @slides = grep {blessed($_) and $_->isa('Prima::Talk::Slide')} @_;
+		carp('Not all objects supplied to Talk::add are slides; ignoring non-slides')
+			if @slides != @_;
+		
+		# append the slides
+		$self->slides($self->slides, @slides);
+		return;
+	}
+	
+	# No, so they should have supplied a class name and a bunch of arguments
+	my $potential_class_name = shift @_;
+	my $class_name;
+	for my $check ($potential_class_name, "Prima::Talk::$potential_class_name") {
+		if ( eval { $check->isa('Prima::Talk::Slide') } ) {
+			$class_name = $check;
+			last;
+		}
+	}
+	croak("Neither $potential_class_name nor Prima::Talk::$potential_class_name "
+		. 'are valid slide class names') unless defined $class_name;
+	
+	# Ensure they provided key/value constructor options
+	croak("Arguments for $class_name constructor not supplied as key/value pairs")
+		if @_ % 2 == 1;
+	
+	# append the slide
+	$self->slides($self->slides, $class_name->new(@_));
+}
+
+=head2 DONT_add
+
+This is a no-op that is handy if you have a slide that you don't want to
+show but which you don't want to delete quite yet. As with
+C<Prima::Talk::DONT_ADD>, this is handy during the editing process, but it
+offers a slightly more fine-graned approach to omitting slides. For
+example, if you have three slides and you are considering omitting the
+second, but don't want to just delete the code, you could change this:
+
+ $talk->add(Slide =>
+   ... content for first slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for second slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for third slide ...
+ );
+
+to this:
+
+ $talk->add(Slide =>
+   ... content for first slide ...
+ );
+ 
+ $talk->DONT_add(Slide =>
+   ... content for second slide ...
+ );
+ 
+ $talk->add(Slide =>
+   ... content for third slide ...
+ );
+
+=cut
+
+sub DONT_add {}
+
+=head2 set_title
+
+Sets the talk's title text, but does not call any triggers, callbacks, or
+anything else. This simply changes the title text.
+
+=cut
+
+sub set_title {
+	my ($self, $title) = @_;
+	$self->{title_label}->text($title);
+}
+
+=head2 animate
+
+Kicks off an animation sequence. Takes the number of frames, the timeout
+(in milliseconds), and a subroutine reference that executes the animation.
+
+ Prima::Talk::animate($N_frames, $timeout, sub {
+   my ($curr_frame, $N_frames) = @_;
+   # do animation for the current frame
+ });
+
+=cut
+
+sub animate {
+	my ($N_frames, $timeout, $sub) = @_;
+	
+	# Create a state variable for the timer
+	my $counter = 0;
+	Prima::Timer->create(
+		timeout => $timeout,
+		onTick => sub {
+			my $self = shift;
+			
+			if ($counter < $N_frames) {
+				$sub->($counter, $N_frames);
+				$counter++;
+			}
+			else {
+				$self->destroy;
+			}
+		},
+	)->start;
+}
+
+
+package Prima::Talk::Slide;
+use Carp;
+
+sub new {
+	my $class = shift;
+	$class = ref($class) || $class;
+	my $self = bless { @_ }, $class;
+	$self->init;
+	return $self;
+}
+
+sub init {
+	my $self = shift;
+	# Make sure we have a name
+	if (not defined $self->{title}) {
+		carp('No title for slide!');
+		$self->{title} = 'No name';
+	}
+	# Make sure we have a toc entry
+	$self->{toc_entry} = $self->{toc} if exists $self->{toc};
+	$self->{toc_entry} = $self->{title} unless exists $self->{toc_entry};
+	
+	# Make sure we have a font size factor
+	$self->{font_factor} ||= 1;
+	
+
+	# gripe if they don't have content
+	if (not defined $self->{content}) {
+		carp('No content for slide!');
+		$self->{content} = [par => 'No content'];
+	}
+	# If they supplied a single text string, interpret it as a paragraph
+	elsif (ref ($self->{content}) eq ref('')) {
+		$self->{content} = [par => $self->{content}];
+	}
+	
+	# Initialize and empty tear_down_names list
+	$self->{tear_down_names} = [];
+}
+
+sub slide_deck {
+	return $_[0]->{slide_deck} if @_ == 1;
+	my ($self, $deck) = @_;
+	$self->{slide_deck} = $deck;
+}
+
+sub title {
+	return $_[0]->{title} if @_ == 1;
+	my ($self, $title) = @_;
+	$self->{title} = $title;
+}
+
+sub toc_entry {
+	return $_[0]->{toc_entry} if @_ == 1;
+	my ($self, $toc_entry) = @_;
+	$self->{toc_entry} = $toc_entry;
+}
+
+sub content {
+	my $self = shift;
+	return @{$self->{content}} if @_ == 0;
+	if (@_ % 2 == 1) {
+		carp("Content must be in key/value pairs");
+		pop @_;
+	}
+	$self->{content} = [@_];
+}
+
+sub set_toc_visibility {
+	# Turn on the table of contents
+	my $self = shift;
+	
+	$self->slide_deck->toc_visible(1);
+}
+
+sub set_footer_visibility {
+	my $self = shift;
+	
+	$self->slide_deck->footer_visible(1);
+}
+
+sub font_factor {
+	my $self = shift;
+	return $self->{font_factor} if @_ == 0;
+	$self->{font_factor} = $_[0];
+}
+
+sub font_size {
+	my $self = shift;
+	
+	# Called as a getter
+	return $self->slide_deck->container->font->{size} * $self->font_factor
+		if @_ == 0;
+	
+	# Called as a setter
+	my $new_size = $_[0];
+	$self->font_factor($new_size / $self->slide_deck->container->font->{size});
+}
+
+sub setup {
+	my $self = shift;
+	
+	# Turn on the table of contents, get the slide container
+	$self->set_toc_visibility;
+	$self->set_footer_visibility;
+	my $container = $self->slide_deck->container;
+	
+	# Focus on the talk widget. User interaction with widgets on previous
+	# slides can cause us to lose focus and therefore not get slide advance
+	# commands. This circumvents that. Slides can alter the focus with their
+	# rendering commands if necessary.
+	$self->slide_deck->focus(1);
+	
+	# Add some padding
+	$container->insert(Widget =>
+		width => 5,
+		pack => { side => 'left', fill => 'y' },
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	
+	# Render the content
+	# working here - add multicolumn support
+	$self->render_content($container, title => $self->title, $self->content);
+	
+	$self->{transition_count} = 0;
+	$self->transition(0);
+}
+
+sub special_key {
+	my $self = shift;
+	$self->{special_key}->($self) if exists $self->{special_key};
+}
+
+sub render_content {
+	my ($self, $container, @content) = @_;
+	while (@content) {
+		my ($type, $stuff) = (shift @content, shift @content);
+		if ($self->{"render_$type"}) {
+			$self->{"render_$type"}->($self, $stuff, $container);
+		}
+		elsif (my $subref = $self->can("render_$type")) {
+			$subref->($self, $stuff, $container);
+		}
+		else {
+			carp("Unknown content type $type; defaulting to paragraph rendering");
+			$self->render_par($stuff, $container);
+		}
+	}
+}
+
+sub alignment {
+	return $_[0]->{alignment} || ta::Left;
+}
+
+sub render_title {
+	my ($self, $title, $container) = @_;
+	$self->slide_deck->set_title($title);
+}
+
+sub store_object_under_name {
+	my ($self, $name, $object) = @_;
+	return unless $name;
+	croak("Already have content named [$name]")
+		if exists $self->{$name};
+	# Store the object under the given name
+	$self->{$name} = $object;
+	# Add the name to the destroy list for the slide tear-down phase:
+	push @{$self->{tear_down_names}}, $name;
+}
+
+sub render_par {
+	my ($self, $content, $container) = @_;
+	my %params = ( alignment => $self->alignment );
+	if (ref($content)) {
+		%params = (%params, %$content);
+	}
+	else {
+		$params{text} = $content;
+	}
+	
+	if (not exists $params{text}) {
+		carp("No text for paragraph; skipping");
+		return;
+	}
+	
+	# Clean out extra whitespace
+	$params{text} =~ s/\s+/ /g;
+	# Remove beginning and trailing whitespace
+	$params{text} =~ s/^\s+//;
+	$params{text} =~ s/\s+$//;
+	
+	my $label = $container->insert(Label =>
+		%params,
+		pack => { side => 'top', fill => 'x' },
+		autoHeight => 1,
+		wordWrap => 1,
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	$label->font->size($self->font_size);
+	$self->store_object_under_name($params{name}, $label);
+	return $label;
+}
+
+use Digest::MD5 qw(md5_hex);
+sub render_tex {
+	my ($self, $content, $container) = @_;
+	
+	# Get the hash of content
+	$content = {tex => $content} unless ref($content);
+	my %content = %$content;
+	
+	if (not exists $content{tex}) {
+		carp("No tex content; skipping");
+		return;
+	}
+	
+	# Extract the package details and string of tex
+	my $packages = delete $content{packages} || '';
+	my $tex = delete $content{tex};
+	
+	# Build the cache name
+	my $cache_name = 'latex-' . md5_hex($packages . $tex) . '.png';
+	
+	# Create the png image if the file does not already exist
+	unless (-f $cache_name) {
+		# Generate the latex document with the content
+		open my $out_fh, '>', '_tmp.tex';
+		print $out_fh '
+\documentclass{article}
+' . $packages . '
+\pagestyle{empty}
+\begin{document}
+' . $tex . '
+\end{document}
+';
+		close $out_fh;
+		
+		# Execute the tex and conversion
+		eval {
+			system('latex', '-interaction=nonstopmode', '_tmp.tex');
+			return unless -f '_tmp.dvi';
+			unlink '_tmp.tex';
+			system('dvips', '-E', '_tmp.dvi');
+			return unless -f '_tmp.ps';
+			unlink '_tmp.dvi';
+			system('convert', '-density', '200', '_tmp.ps', '-flatten', $cache_name);
+			return unless -f $cache_name;
+			unlink '_tmp.ps';
+			1;
+		} or do {
+			carp("Unable to render latex");
+			$self->render_par($content, $container);
+			return;
+		}
+	}
+	
+	# Open the image and set it in the container
+	$self->render_image({filename => $cache_name, %content}, $container);
+}
+
+my %image_cache;
+
+sub get_image {
+	my ($self, $filename) = @_;
+	
+	$image_cache{$filename}
+		||= Prima::Image->load($filename) or do {
+			carp("Unable to open image file $filename");
+			return;
+		};
+	return $image_cache{$filename};
+}
+
+sub render_image {
+	my ($self, $content, $container) = @_;
+	
+	# Get the hash of content
+	$content = { filename => $content } unless ref($content);
+	my %content = %$content;
+	
+	# Load the image
+	my $filename = delete $content{filename};
+	my $image = $self->get_image($filename) or return;
+	
+	# Open the image and set it in the container
+	my $image_viewer = $container->insert(ImageViewer =>
+		alignment => $self->alignment,
+		%content,
+		image => $image,
+		pack => { side => 'top', fill => 'x' },
+		height => $image->height,
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	$self->store_object_under_name($content->{name} => $image_viewer);
+	return $image_viewer;
+}
+
+sub render_plot {
+	my ($self, $content, $container) = @_;
+	require PDL::Graphics::Prima;
+	my $height = $self->slide_deck->calculate_size(plot_height =>
+		$content->{height} || '99%colheight', $container
+	);
+	my $width = $self->slide_deck->calculate_size(plot_width =>
+		$content->{width} || '99%colwidth', $container
+	);
+	my $plot = $container->insert(Plot =>
+		%$content,
+		pack => { side => 'top' },
+		height => $height,
+		width => $width,
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	$plot->font->size($self->font_size);
+	
+	# add the plot to the slide under the provided name
+	$self->store_object_under_name($content->{name} => $plot);
+	
+	return $plot;
+}
+
+sub render_two_column {
+	my ($self, $content, $container) = @_;
+	croak("two_column expects a hashref")
+		unless ref($content) eq ref({});
+	my $full_width = $container->width;
+	my $left_width = $self->slide_deck->calculate_size( left_width =>
+		$content->{left_width} || '48%colwidth', $container
+	);
+	my $right_width = $self->slide_deck->calculate_size( right_width =>
+		$content->{right_width} || '48%colwidth', $container
+	);
+	my $height = $self->slide_deck->calculate_size( two_column_height =>
+		$content->{height} || '99%colheight', $container
+	);
+	
+	my $two_container = $container->insert(Widget =>
+		height => $height,
+		pack => { side => 'top', fill => 'x' },
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	$two_container->font->size($self->font_size);
+	
+	# Render the left content
+	my $left_column = $two_container->insert(Widget =>
+		width => $left_width,
+		height => $height,
+		place => { x => 0, width => $left_width, anchor => 'sw' },
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	my @content;
+	if ($content->{left}) {
+		if (ref($content->{left}) eq ref([])) {
+			@content = @{$content->{left}};
+		}
+		elsif (ref($content->{left}) eq ref({})) {
+			carp("Left content passed in an anonymous hash; better to pass "
+				."in an anonymous array to guarantee content order");
+			@content = %{$content->{left}};
+		}
+		else {
+			carp("Unknown left content; skipping");
+		}
+	}
+	$self->render_content($left_column, @content);
+	
+	# Render the right content
+	my $right_column = $two_container->insert(Widget =>
+		width => $right_width,
+		height => $height,
+		place => {
+			x => $full_width - $right_width, width => $right_width, anchor => 'sw'
+		},
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+	if ($content->{right}) {
+		if (ref($content->{right}) eq ref([])) {
+			@content = @{$content->{right}};
+		}
+		elsif (ref($content->{right}) eq ref({})) {
+			carp("Right content passed in an anonymous hash; better to pass "
+				."in an anonymous array to guarantee content order");
+			@content = %{$content->{right}};
+		}
+		else {
+			carp("Unknown right content; skipping");
+		}
+	}
+	$self->render_content($right_column, @content);
+}
+
+sub render_spacer {
+	my ($self, $height, $container) = @_;
+	
+	$height = $self->slide_deck->calculate_size( spacer_height =>
+		$height, $container
+	);
+	
+	$container->insert(Widget =>
+		pack => { side => 'top', fill => 'x' },
+		height => $height,
+		color => $container->color,
+		backColor => $container->backColor,
+	);
+}
+
+sub render_subref {
+	my ($self, $content, $container) = @_;
+	if (ref($content) ne ref(sub {})) {
+		carp("Cannot 'render' subref that's not actually a subref!");
+		return;
+	}
+	$content->($self, $container);
+}
+
+sub render_init {
+	my ($self, $content, $container) = @_;
+	if (ref($content) ne ref({})) {
+		carp("init expects a hashref with key/value pairs");
+		return;
+	}
+	my %to_init = %$content;
+	while (my ($k, $v) = each %$content) {
+		if (ref($v) eq ref(sub{})) {
+			$self->{stash}->{$k} = $v->($self, $container);
+		}
+		else {
+			$self->{stash}->{$k} = $v;
+		}
+	}
+}
+
+sub stash {
+	croak("stash is a method that expects one or two arguments")
+		unless @_ == 2 or @_ == 3;
+	my $self = shift;
+	my $key = shift;
+	# Called as a getter
+	return $self->{stash}->{$key} if @_ == 0;
+	# called as a setter
+	$self->{stash}->{$key} = $_[0];
+}
+
+use charnames ':full';
+my $bullet = "\N{BULLET}";
+sub render_bullets {
+	my ($self, $bullets, $container) = @_;
+	
+	# Add a small spacer
+	$self->render_spacer('0.5em', $container);
+	my $height = $container->font->height;
+	
+	# For each bullet, pack the bullet then the paragraph
+	for my $bullet_text (@$bullets) {
+		my $bullet_container = $container->insert(Widget =>
+			pack => { side => 'top', fill => 'x' },
+			color => $container->color,
+			backColor => $container->backColor,
+		);
+		# Insert a phantom bullet to make the packer happy, but actually
+		# use "place" to render the bullet where we want it
+		my $shadow_bullet = $bullet_container->insert(Label =>
+			pack => { side => 'left', padx => 20 },
+			text => $bullet,
+			visible => 0,
+		);
+		my $bullet = $bullet_container->insert(Label =>
+			place => {
+				x => 8, width => $shadow_bullet->width, anchor => 'sw',
+				rely => 1, y => -$height, height => $height,
+			},
+			color => $container->color,
+			backColor => $container->backColor,
+			text => $bullet,
+			alignment => ta::Center,
+		);
+		$bullet->font->size($self->font_size);
+		$self->render_par($bullet_text, $bullet_container);
+	}
+	
+	# Add a small spacer at the end.
+	$self->render_spacer('0.5em', $container);
+}
+
+sub transition {
+	my ($self, $direction) = @_;
+	
+	# Act based on the keys supplied
+	if ($self->{transition}) {
+		return $self->{transition}->($self, $direction);
+	}
+	elsif ($self->{transitions}) {
+		# Get the list of transitions and the current transition count
+		my @transitions = @{$self->{transitions}};
+		my $counter = $self->{transition_count} + $direction;
+		
+		# Can't transition to something outside the list!
+		return 0 if $counter < 0 or $counter > $#transitions;
+		
+		# If the current transition has a leave callback, call it
+		if (ref($transitions[$counter - $direction]) eq 'HASH') {
+			my %trans_table = %{$transitions[$counter - $direction]};
+			if ($direction == -1 and exists $trans_table{leave_backwards}) {
+				$trans_table{leave_backwards}->($self);
+			}
+			elsif ($direction == 1 and exists $trans_table{leave_forwards}) {
+				$trans_table{leave_forwards}->($self);
+			}
+		}
+		
+		# Update the transition counter
+		$self->{transition_count} = $counter;
+		
+		# Call the transition.
+		if (ref($transitions[$counter]) eq 'HASH') {
+			my %trans_table = %{$transitions[$counter]};
+			exists $trans_table{enter} or croak('Transition table for '
+				. "$counter transition does not have an enter sub");
+			$trans_table{enter}->($self, $direction);
+		}
+		else {
+			$transitions[$counter]->($self, $direction);
+		}
+		
+		return 1;
+	}
+	
+	return 0;
+}
+
+sub tear_down {
+	my $self = shift;
+	
+	# Really basic - just remove widgets
+	$_->destroy foreach (reverse $self->slide_deck->container->get_components);
+	
+	# Call the supplied tear-down method
+	$self->{tear_down}->($self)
+		if exists $self->{tear_down}
+		and ref($self->{tear_down}) eq ref( sub{} );
+	
+	# Remove all the named keys
+	while (my $name = pop @{$self->{tear_down_names}}) {
+		delete $self->{$name};
+	}
+}
+
+package Prima::Talk::WideSlide;
+
+our @ISA = qw(Prima::Talk::Slide);
+
+sub set_toc_visibility {
+	# Turn on the table of contents
+	my $self = shift;
+	$self->slide_deck->toc_visible(0);
+}
+
+package Prima::Talk::WideEmphasize;
+
+our @ISA = qw(Prima::Talk::Slide);
+
+sub init {
+	my $self = shift;
+	# Content is not necessary for title slides, so add a default of an
+	# empty string
+	$self->{content} = '' if not exists $self->{content};
+	return $self->SUPER::init();
+}
+
+# Turn on the table of contents
+sub set_toc_visibility { $_[0]->slide_deck->toc_visible(0) }
+sub alignment { ta::Center }
+
+sub title_font_size {
+	my $self = shift;
+	return $self->font_size * $self->title_font_ratio;
+}
+
+sub title_font_ratio {
+	my $self = shift;
+	
+	# Called as a getter?
+	if (@_ == 0) {
+		# Return local ratio if it exists
+		return $self->{title_font_ratio} if defined $self->{title_font_ratio};
+		# Otherwise return the deck's ratio
+		return $self->slide_deck->title_font_ratio;
+	}
+	
+	# Called as a setter, so set the local ratio
+	$self->{title_font_ratio} = $_[0];
+}
+
+sub render_title {
+	my ($self, $title, $container) = @_;
+	
+	# Clear the default title
+	$self->slide_deck->set_title('');
+	
+	# Display the title 2/5 of the way down
+	my $title_label = $container->insert(Label =>
+		text => $title,
+		pack => { side => 'top', fill => 'x' },
+		height => 0.4 * $container->height,
+		valignment => ta::Bottom,
+		alignment  => ta::Center,
+		wordWrap => 1,
+	);
+	$title_label->font->size($self->title_font_size);
+}
+
+package Prima::Talk::Emphasize;
+our @ISA = qw(Prima::Talk::WideEmphasize);
+sub set_toc_visibility { $_[0]->slide_deck->toc_visible(1) }
+
+package Prima::Talk::Section;
+our @ISA = qw(Prima::Talk::Emphasize);
+
+package Prima::Talk::WideSection;
+our @ISA = qw(Prima::Talk::Section);
+sub set_toc_visibility { $_[0]->slide_deck->toc_visible(0) }
