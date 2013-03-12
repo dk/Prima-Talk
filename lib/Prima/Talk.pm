@@ -1823,6 +1823,7 @@ sub render_title {
 	$self->slide_deck->set_title($title);
 }
 
+# Combine this method with the next one some day.
 sub store_object_under_name {
 	my ($self, $name, $object) = @_;
 	return unless $name;
@@ -1830,8 +1831,48 @@ sub store_object_under_name {
 		if exists $self->{$name};
 	# Store the object under the given name
 	$self->{$name} = $object;
-	# Add the name to the destroy list for the slide tear-down phase:
+	
+	# We need to clear out all the names at tear-down so that if we
+	# transition back to this slide, we have a clean slate. So, we track all
+	# the names here:
 	push @{$self->{tear_down_names}}, $name;
+}
+
+sub stash {
+	croak("stash is a method that expects one or two arguments")
+		unless @_ == 2 or @_ == 3;
+	my $self = shift;
+	my $key = shift;
+	# Called as a getter
+	return $self->{stash}->{$key} if @_ == 0;
+	# called as a setter
+	$self->{stash}->{$key} = $_[0];
+}
+
+sub render_container {
+	my ($self, $content, $parent_container) = @_;
+	unless (ref($content) and ref($content) eq ref({})) {
+		carp("Container expects a hashref specification; skipping");
+		return;
+	}
+	
+	my $height = $self->slide_deck->calculate_size(container_height =>
+		$content->{height} || '99%colheight', $parent_container
+	);
+	my $width = $self->slide_deck->calculate_size(container_width =>
+		$content->{width} || '99%colwidth', $parent_container
+	);
+	my $new_container = $parent_container->insert(Widget =>
+		color => $parent_container->color,
+		backColor => $parent_container->backColor,
+		pack => { side => 'top', fill => 'x' },
+		%$content,
+		height => $height,
+		width => $width,
+	);
+	
+	$self->store_object_under_name($content->{name}, $new_container);
+	return $new_container;
 }
 
 sub render_par {
@@ -1856,12 +1897,12 @@ sub render_par {
 	$params{text} =~ s/\s+$//;
 	
 	my $label = $container->insert(Label =>
-		%params,
-		pack => { side => 'top', fill => 'x' },
-		autoHeight => 1,
-		wordWrap => 1,
 		color => $container->color,
 		backColor => $container->backColor,
+		autoHeight => 1,
+		pack => { side => 'top', fill => 'x' },
+		wordWrap => 1,
+		%params,
 	);
 	$label->font->size($self->font_size);
 	$self->store_object_under_name($params{name}, $label);
@@ -1952,12 +1993,12 @@ sub render_image {
 	# Open the image and set it in the container
 	my $image_viewer = $container->insert(ImageViewer =>
 		alignment => $self->alignment,
-		%content,
-		image => $image,
 		pack => { side => 'top', fill => 'x' },
-		height => $image->height,
 		color => $container->color,
 		backColor => $container->backColor,
+		%content,
+		image => $image,
+		height => $image->height,
 	);
 	$self->store_object_under_name($content->{name} => $image_viewer);
 	return $image_viewer;
@@ -1973,12 +2014,12 @@ sub render_plot {
 		$content->{width} || '99%colwidth', $container
 	);
 	my $plot = $container->insert(Plot =>
-		%$content,
-		pack => { side => 'top' },
-		height => $height,
-		width => $width,
 		color => $container->color,
 		backColor => $container->backColor,
+		pack => { side => 'top' },
+		%$content,
+		height => $height,
+		width => $width,
 	);
 	$plot->font->size($self->font_size);
 	
@@ -2059,6 +2100,10 @@ sub render_two_column {
 		}
 	}
 	$self->render_content($right_column, @content);
+	
+	# Store the columns
+	$self->store_object_under_name($content->{left_name}, $left_column);
+	$self->store_object_under_name($content->{right_name}, $right_column);
 }
 
 sub render_spacer {
@@ -2085,33 +2130,6 @@ sub render_subref {
 	$content->($self, $container);
 }
 
-sub render_init {
-	my ($self, $content, $container) = @_;
-	if (ref($content) ne ref({})) {
-		carp("init expects a hashref with key/value pairs");
-		return;
-	}
-	my %to_init = %$content;
-	while (my ($k, $v) = each %$content) {
-		if (ref($v) eq ref(sub{})) {
-			$self->{stash}->{$k} = $v->($self, $container);
-		}
-		else {
-			$self->{stash}->{$k} = $v;
-		}
-	}
-}
-
-sub stash {
-	croak("stash is a method that expects one or two arguments")
-		unless @_ == 2 or @_ == 3;
-	my $self = shift;
-	my $key = shift;
-	# Called as a getter
-	return $self->{stash}->{$key} if @_ == 0;
-	# called as a setter
-	$self->{stash}->{$key} = $_[0];
-}
 
 use charnames ':full';
 my $bullet = "\N{BULLET}";
