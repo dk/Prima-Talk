@@ -371,6 +371,9 @@ sub init {
 				place => { x => 0, y => 0, relwidth => 1, relheight => 1, anchor => 'sw'},
 				color => $profile{aspect_backColor},
 				backColor => $profile{aspect_backColor},
+				# Allow the speaker to hide the mouse on the edges
+				onMouseEnter => sub { $::application->pointerVisible(0) },
+				onMouseLeave => sub { $::application->pointerVisible(1) },
 			)->insert(Widget =>
 		color => $self->color,
 		backColor => $self->backColor,
@@ -444,6 +447,9 @@ sub init {
 		backColor => $self->{toc_backColor},
 		valignment => ta::Middle,
 		alignment => ta::Center,
+		# Allow the speaker to hide the mouse in the title. :-)
+		onMouseEnter => sub { $::application->pointerVisible(0) },
+		onMouseLeave => sub { $::application->pointerVisible(1) },
 	);
 	$self->{title_label}->font->size(
 		$self->{title_label}->font->size * $self->{title_font_ratio} );
@@ -1890,6 +1896,10 @@ sub render_par {
 		return;
 	}
 	
+	# Get font stuff
+	my $font_factor = delete $params{font_factor} || 1;
+	my $font_name = delete $params{font_name} || $container->font->{name};
+	
 	# Clean out extra whitespace
 	$params{text} =~ s/\s+/ /g;
 	# Remove beginning and trailing whitespace
@@ -1904,7 +1914,8 @@ sub render_par {
 		wordWrap => 1,
 		%params,
 	);
-	$label->font->size($self->font_size);
+	$label->font->size($self->font_size * $font_factor);
+	$label->font->name($font_name);
 	$self->store_object_under_name($params{name}, $label);
 	return $label;
 }
