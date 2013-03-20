@@ -2,23 +2,25 @@ package Prima::Drawable::Subcanvas;
 
 use strict;
 use warnings;
-use Prima::Drawable;
-our @ISA = qw(Prima::Drawable);
+use Prima;
+our @ISA = qw(Prima::Image);
+use Carp;
 
 sub init {
 	my $self = shift;
 	my %profile = $self->SUPER::init(@_);
 	
-	# Ensure there is a parent canvas
-	croak('You must supply a parent canvas')
-		unless exists $self->{parent_canvas};
-	if (not exists $self->{subcanvas_rect}) {
-		# Set the subcanvas_rect if not supplied
-		$self->subcanvas_rect(0, 0, $self->{parent_canvas}->size);
+	croak('You must provide a parent canvas')
+		unless exists $profile{parent_canvas};
+	$self->{parent_canvas} = $profile{parent_canvas};
+	
+	if (not exists $profile{subcanvas_offset}) {
+		# Set the subcanvas_offset if not supplied
+		$self->subcanvas_offset(0, 0);
 	}
 	else {
 		# Run through the setter to be sure that everything is ok
-		$self->subcanvas_rect(@{$self->{subcanvas_rect}});
+		$self->subcanvas_offset(@{$profile{subcanvas_offset}});
 	}
 	
 	return $self;
@@ -33,29 +35,25 @@ sub fixup_rect {
 	return @rect;
 }
 
+sub subcanvas_offset {
+	my ($self, @new_offset) = @_;
+	return @{$self->{subcanvas_offset}} unless @new_offset;
+	$self->{subcanvas_offset} = \@new_offset;
+	return @new_offset;
+}
+
 sub subcanvas_rect {
 	my ($self, @new_rect) = @_;
-	return @{$self->{subcanvas_rect}} unless @new_rect;
-	@new_rect = fixup_rect('Subcanvas rect', @new_rect);
-	$self->{subcanvas_rect} = \@new_rect;
-}
-
-sub size {
-	croak("Cannot change the size of a subcanvas") if @_ > 1;
-	my @sub_rect = @{$_[0]->{subcanvas_rect}};
-	return ($sub_rect[2] - $sub_rect[0], $sub_rect[3] - $sub_rect[1]);
-}
-
-sub height {
-	croak("Cannot change the size of a subcanvas") if @_ > 1;
-	my @sub_rect = @{$_[0]->{subcanvas_rect}};
-	return $sub_rect[3] - $sub_rect[1];
-}
-
-sub width {
-	croak("Cannot change the size of a subcanvas") if @_ > 1;
-	my @sub_rect = @{$_[0]->{subcanvas_rect}};
-	return $sub_rect[2] - $sub_rect[0];
+	if (@new_rect) {
+		@new_rect = fixup_rect('Subcanvas rect', @new_rect);
+		$self->subcanvas_offset(@new_rect[0,1]);
+		$self->size($new_rect[2] - $new_rect[0], $new_rect[3] - $new_rect[1]);
+		return @new_rect;
+	}
+	else {
+		my ($left, $bottom) = $self->subcanvas_offset;
+		return ($left, $bottom, $left + $self->width, $bottom + $self->heigh);
+	}
 }
 
 sub begin_paint {
@@ -69,32 +67,94 @@ sub end_paint {
 	$_[0]->{parent_canvas}->end_paint;
 }
 
-# These properties must be stored internally
+# Graphics properties must be stored internally. Note the font attribute
+# needs to be handled with a tied hash at some point.
 my @properties = qw(backColor color fillWinding fillPattern font lineEnd
 					lineJoin linePattern lineWidth palette rop rop2
 					splinePrecision textOpaque textOutBaseline);
 for my $prop_name (@properties) {
 	# Build the sub to handle the getting and setting of the property.
+	no strict 'refs';
 	*{$prop_name} = sub {
+		use strict 'refs';
 		my $self = shift;
 		
+print "parent canvas is $self->{parent_canvas}\n";
 		# Called as getter?
 		if (@_ == 0) {
 			# Return the internal value, or the parent's value if not set
 			return $self->{$prop_name} if exists $self->{$prop_name};
 			return $self->{parent_canvas}->$prop_name();
 		}
-		# Called as setter?
+		# Called as setter/clearer?
 		else {
-			# Clear if sent undef; otherwise set the internal value
+			# Get the new value. Undef means "clear"
 			my $new_value = shift;
-			return $self->{$prop_name} = $new_value if defined $new_value;
-			return delete $self->{$prop_name};
+			if (defined $new_value) {
+				# Called as setter. Backup unless we already have a backup
+				$self->{"backup_$prop_name"}
+					||= $self->{parent_canvas}->$prop_name()
+					unless exists $self->{"backup_$prop_name"};
+				$self->{parent_canvas}->$prop_name($new_value);
+			}
+			else {
+				# Called as clearer
+				$self->{parent_canvas}->$prop_name(
+					$self->{"backup_$prop_name"}
+				);
+				delete $self->{$prop_name};
+			}
 		}
 	};
 }
 
+# Primitives must apply the clipping and translating before calling on the
+# parent.
+my @primitives = qw(arc bar chord draw_text ellipse fill_chord
+					fill_ellipse fillpoly fill_sector fill_spline flood_fill
+					line lines pixel polyline put_image put_image_indirect
+					rect3d rect_focus rectangle sector spline stretch_image
+					text_out
+					); 
+
+for my $primitive_name (@primitives) {
+	no strict 'refs';
+	*{$primitive_name} = sub {
+		use strict 'refs';
+		my ($self, @args_for_method) = @_;
+		
+print "drawing $primitive_name on subcanvas\n";
+		# Begin by ensuring that the clipping and translation are enforced:
+		$self->clipRect($self->clipRect);
+		$self->translate($self->translate);
+		
+		# Apply the method
+		$self->{parent_canvas}->$primitive_name(@args_for_method);
+	};
+}
+
 # These have to be handled specially:
+sub clear {
+	my $self = shift;
+	my @subcanvas_rect = $self->subcanvas_rect;
+	if (@_ == 0) {
+		# Clear the full subcanvas
+		$self->{parent_canvas}->clear(@subcanvas_rect);
+	}
+	else {
+		my @to_clear = @_;
+		$to_clear[0] += $subcanvas_rect[0];
+		$to_clear[2] += $subcanvas_rect[0];
+		$to_clear[1] += $subcanvas_rect[1];
+		$to_clear[3] += $subcanvas_rect[1];
+		# Clip upper end
+		$to_clear[0] = $subcanvas_rect[0] if $to_clear[0] < $subcanvas_rect[0];
+		$to_clear[1] = $subcanvas_rect[1] if $to_clear[1] < $subcanvas_rect[1];
+		$to_clear[2] = $subcanvas_rect[2] if $to_clear[2] > $subcanvas_rect[2];
+		$to_clear[3] = $subcanvas_rect[3] if $to_clear[3] > $subcanvas_rect[3];
+		$self->{parent_canvas}->clear(@to_clear);
+	}
+}
 
 # Apply the subcanvas's clipRect, using the internal translation
 sub clipRect {
@@ -113,7 +173,7 @@ sub clipRect {
 	@new_rect = fixup_rect('clipRect', @new_rect);
 	
 	# Backup and store
-	$self->{backup_clipRect} = [$self->{parent_canvas}->clipRect];
+	$self->{backup_clipRect} ||= [$self->{parent_canvas}->clipRect];
 	$self->{clipRect} = \@new_rect;
 	
 	# Apply (to the parent's canvas)
@@ -137,22 +197,42 @@ sub clipRect {
 		$right = $subcanvas_rect[2] if $right > $subcanvas_rect[2];
 		$top = $subcanvas_rect[3] if $top > $subcanvas_rect[3];
 	}
-	$self->{parent_canvas}->clipRect($left, $bottom, $right, $top)
+	$self->{parent_canvas}->clipRect($left, $bottom, $right, $top);
 }
 
 sub translate {
+	my ($self, @new_trans) = @_;
 	
+	# As getter, return what we have
+	if (not @new_trans) {
+		return @{$self->{translate}} if $self->{translate};
+		return (0, 0);
+	}
+	
+	# Don't set unless we're in paint mode
+	return unless $self->{parent_canvas}->get_paint_state;
+	
+	# Backup and store
+	$self->{backup_translate} ||= [$self->{parent_canvas}->translate];
+	$self->{translate} = \@new_trans;
+	
+	# Apply (to the parent's canvas)
+	my @subcanvas_rect = $self->subcanvas_rect;
+	$new_trans[0] += $subcanvas_rect[0];
+	$new_trans[1] += $subcanvas_rect[1];
+	
+	$self->{parent_canvas}->translate(@new_trans);
 }
 
 sub region {
-	
+	warn "subcanvas region is not yet implemented";
 }
 
 sub AUTOLOAD {
 	my $self = shift;
 	
 	# Remove qualifier from original method name...
-	(my $called = $AUTOLOAD) =~ s/.*:://;
+	(my $called = our $AUTOLOAD) =~ s/.*:://;
 	
 	my $parent_canvas = $self->{parent_canvas};
 	if (my $subref = $parent_canvas->can($called)) {
@@ -161,6 +241,38 @@ sub AUTOLOAD {
 		# Perform the drawing operation
 		$subref->($parent_canvas, @_);
 		# Restore the previous clip rectangle and translation
+	}
+	else {
+		die "Don't know how to $called\n";
+	}
+}
+
+sub restore_parent {
+	my $self = shift;
+	my @props = map { /^backup_(.*)/ ? ($1) : () } keys %$self;
+	# Undefine all the backed-up props
+	$self->$_(undef) for (@props);
+}
+
+sub Prima::Drawable::paint_with_widgets {
+	my ($self, $canvas) = @_;
+	
+	# Always paint self directly on the canvas
+	$self->notify('Paint', $canvas);
+	
+	for my $widget ($self->get_widgets) {
+		next if not defined $widget;
+		# Get the corner and the extent
+		my ($left, $bottom) = $widget->origin;
+		my ($width, $height) = $widget->size;
+		# Paint the children on their own subcanvases
+print join(', ', $left, $bottom, $left + $width, $bottom + $height), "\n";
+		my $subcanvas = Prima::Drawable::Subcanvas->create(
+			parent_canvas => $canvas,
+			subcanvas_offset => [$left, $bottom],
+								
+		);
+		$widget->paint_with_widgets($subcanvas);
 	}
 }
 
