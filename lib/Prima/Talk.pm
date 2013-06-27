@@ -2260,9 +2260,10 @@ sub render_image {
 	$content = { filename => $content } unless ref($content);
 	my %content = %$content;
 	
-	# Load the image
+	# Load the image or render a paragraph with the image file name
 	my $filename = delete $content{filename};
-	my $image = $self->get_image($filename) or return;
+	my $image = $self->get_image($filename)
+		or return $self->render_par({text => $filename, %content}, $container);
 	
 	# Open the image and set it in the container
 	my $image_viewer = $container->insert(ImageViewer =>
