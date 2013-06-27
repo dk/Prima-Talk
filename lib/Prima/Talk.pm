@@ -2468,12 +2468,20 @@ sub render_bullets {
 			alignment => ta::Center,
 		);
 		$bullet->font->size($self->font_size);
-		$self->render_par($bullet_text, $bullet_container);
+		$self->render_par({
+			text => $bullet_text,
+			# XXX This needs to be handled better
+			alignment => ta::Left,
+		}, $bullet_container);
 	}
 	
 	# Add a small spacer at the end.
 	$self->render_spacer('0.5em', $container);
 }
+
+=back
+
+=cut
 
 sub transition {
 	my ($self, $direction) = @_;
