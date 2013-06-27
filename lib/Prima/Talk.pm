@@ -737,6 +737,17 @@ sub calculate_size {
 	return $size * $container->height / 100 if $size =~ s/\%colheight$//;
 	return $size * $container->width / 100  if $size =~ s/\%colwidth$//;
 	
+	# Handle special suffixes
+	if ($size =~ /\d*(?:\.\d*)?(.+)/) {
+		my $suffix = $1;
+		if (my $subref = $self->can("size_spec_$suffix")) {
+			$subref->($self, $name, $size, $container);
+		}
+		elsif (exists $self->{"size_spec_$suffix"}) {
+			$self->{"size_spec_$suffix"}->($self, $name, $size, $container);
+		}
+	}
+	
 	croak("Unknown $name size specification $size");
 }
 
