@@ -5,24 +5,27 @@ use warnings;
 # XXX TODO LIST
 # Figure out why em-widths don't work well for toc width
 
+# XXX To think about
+# Basic container classes might allow for indenting blocks of renderables,
+# centering of all renderables, etc. Ideally, containers would get their
+# dimensions from their children, but then relative heights such as
+# '45%colheight' wouldn't work. I need to examine how CSS handles these
+# issues. For example, sizes relative to parent containers may simply issue
+# a fail if the parent container doesn't have a fixed size, or it might
+# walk up the container tree until it finds a container with a fixed size.
+# Also, it would be nice to have vertical fill spacers, and then use an
+# algorithm to determine how many big a vertical fill should be.
+
 =head1 NAME
 
 Prima::Talk - a widget for rendering talks
 
 =head1 SYNOPSIS
 
- use strict;
- use warnings;
- use Prima qw(Talk);
- 
- #########################
- # Setup the Application #
- #########################
- 
- # Border decorations for full-screen are os-dependent
- my @border_args = (borderIcons => bi::SystemMenu);
- @border_args = () if $^O =~ /MS/ or $^O =~ /cywin/i;
- 
+Prima::Talk is just a widget, so you can pack or place it into windows
+or other widgets. The usual usage case is for a full-screen talk, which you
+could pack into a full-screen Window like so:
+
  # Build the application, which will only contain
  # our single talk widget
  my $app = Prima::MainWindow->new(
@@ -32,8 +35,8 @@ Prima::Talk - a widget for rendering talks
    place => { x => 0, relwidth => 1, y => 0,
        relheight => 1, anchor => 'sw' },
    
-   # Set the border decoerations as already specified:
-   @border_args,
+   # Get rid of borderIcons if we're on Windows
+   ($^O =~ /MS/ or $^O =~ /cywin/i) ? () : (borderIcons => bi::SystemMenu),
  );
  
  my $talk = $app->insert(Talk =>
@@ -56,15 +59,75 @@ Prima::Talk - a widget for rendering talks
    backColor => cl::White,
  );
 
+If you are creating a full-screen talk, you might be tempted to get rid of
+the window altogether. After all, widgets don't need windows to exist and be
+displayed. The following recipe will work, but beware: it won't initially
+have the keyboard focus when you begin the talk on a Mac (and maybe other
+operating systems), so you'll have to select the talk with the mouse before
+you can use keyboard navigation.
+
+ use strict;
+ use warnings;
+ use Prima qw(Talk);
+ 
+ #########################
+ # Setup the Application #
+ #########################
+ 
+ my $talk = Prima::Talk->new(
+   # Fill the screen:
+   place => {
+     x => 0, relwidth => 1,
+     y => 0, relheight => 1,
+     anchor => 'sw',
+   },
+   
+   # Set the em-width relative to the container size
+   em_width => '2%width',
+   # Set the table of contents color to contrast
+   toc_color => cl::White,
+   toc_backColor => cl::Black,
+   # Use relative widths and heights
+   toc_width => '12%width',
+   title_height => '10%height',
+   # Default background is Grey, fix that:
+   backColor => cl::White,
+ );
+
 =head1 DESCRIPTION
 
 This module provides something of a super widget whose purpose is to let you
 build a series of interactive slides. The content of the slides can include
 anything from simple text and pictures to customized transitions. You can
 even dictate the behavior of each transition dynamically, based on anything
-from the amount of time that has passed to values that have been entered in
-a widget that was placed on the slide. Indeed, you can include arbitrary
-widgets and interaction within each slide.
+from the amount of time that has passed, to values that have been entered in
+a widget that was placed on the slide, to data that is pulled from the
+internet. Indeed, you can include arbitrary widgets and interaction within
+each slide.
+
+=head2 Navigating a Talk
+
+Prima::Talk does not provide its own file extension for talks. Instead,
+talks are no more than Perl scripts. Thus, if you are trying to view a talk,
+you need to run the script for that talk:
+
+ $ perl my-talk.pl
+
+Once the talk is displayed, you can navigate forward through the transitions
+by pressing the "Down", "Right", and "PageDown" keys. You can navigate
+backward by pressing the "Up", "Left", and "PageUp" keys. You quit the talk
+by pressing the "q" key, and you can jump to any page by pressing the "g"
+key and entering a slide number in the dialog that pops up. The table of
+contents on the left are actually links to the named slides.
+
+Prima::Talk is sensitive to a handful of special key combinations that map
+to my personal clicker, and ostensibly to any normal clicker, too. I have
+found that one of the buttons on my clicker emits the key combinations of
+either "Esc" or "Shift-F5", so both of these issue a "Special Key" command
+to the talk. This allows for rudimentary "extra" behavior in talks, which
+your talk may or may not conain.
+
+=head2 Building a Talk: an overview
 
 There are a number of different ideas to get straight in understanding how
 these talks work. First, you have a C<Prima::Talk> widget. You create such a
@@ -87,11 +150,11 @@ widget by saying something like:
  );
 
 As you can see, there are many ways to configure your Talk, but I'll step
-over that for now. Another idea to get straight is that once you have your
-Talk object, you next need to add
-slides to it. You add slides with the L</add> method, in which you specify
-the class name of the slide object that you want added followed by key/value
-pairs that indicate the settings for the slide, and its content:
+over that for now. Another idea to get straight is that your Talk does not
+come with any content: you need to add slides to it. You add slides with
+the L</add> method, in which you specify the class name of the slide object
+that you want added followed by key/value pairs that indicate the settings
+for the slide, and its content:
 
  $talk->add(Slide =>
    # Short phrase shown in the table of contents
@@ -127,29 +190,32 @@ about the slide types is that they specify how the slides interact with the
 table of contents and the title, but use the exact same content mechanisms.
 
 That brings me to content, and how to specify it. All slides should have a
-title. They should also specify a table-of-contents entry since the title is
-likely to be quite a bit longer than what would fit in the table-of-contents
-column. The other piece of content is an array ref associated with the
-C<content> key, as demonstrated above. The array ref should contain key/value
-pairs wherein the key indicates a content type and a value indicates some
-value that the content type expects, and knows how to render. For example,
-C<par> expects a single string of text which can include newlines and lots
-of whitespace. All whitespace is replaced with single spaces and the
-eventual text gets displayed with text wrapping, if necessary.
+L</title>. They should also specify a L<table-of-contents entry|/toc_entry>
+since the title is likely to be quite a bit longer than what would fit in
+the table-of-contents column. The other piece of content is an array ref
+associated with the C<content> key, as demonstrated above. The array ref
+should contain key/value pairs wherein the key indicates a content type and
+a value indicates some value that the content type expects, and knows how to
+render. For example, C<par> expects a single string of text which can
+include newlines and lots of whitespace. All whitespace is replaced with
+single spaces and the eventual text gets displayed with text wrapping, if
+necessary.
 
-Basic content types include par, spacer, bullets, image, two_column, plot,
-and subref. The last one give arbitrary code for adding custom one-off
-renderings, such as adding custom widgets to the slide. (If you need to do
-many similar renderings for the same slide, you should create a custom
-content type with a rendering subref under the Slide's [not the contens']
-key C<< render_<type> >>. If you need to do many similar renderings across
-many slides, define C<< Prima::Talk::Slide::render_<type> >>.)
+Basic content types include L<par|/par>, L<spacer|/spacer>,
+L<bullets|/bullets>, L<image|/image>, L<two_column|/two_column>,
+L<plot|/plot>, and L<subref|/subref>. The last one takes arbitrary code for
+adding custom one-off renderings, such as adding custom widgets to the
+slide. (If you need to do many similar renderings for the same slide, you
+should create a custom content type with a rendering subref under the
+Slide's [not the contents'] key C<< render_<type> >>. If you need to do many
+similar renderings across many slides, define
+C<< Prima::Talk::Slide::render_<type> >>.)
 
 And finally we get to the last bit. Transitions are custom behaviors that
 happen every time the speaker hits the forward or back button. These
 behaviors do not need to advance to the next slide. In fact, they don't even
 need to behave in a set way each time. You specify transition behavior by
-either associating a subref with the Slide key C<transition>, or by
+either associating a single subref with the Slide key C<transition>, or by
 associating a list of subrefs with the C<transitions> key. When called, all
 of these subrefs are passed the slide object and the direction of the
 transition. The difference between the two is how they handle advancing to
@@ -305,6 +371,8 @@ sub print_current_slide {
 	$ps->end_doc;
 }
 
+# Returns a list of "place" key/value pairs suitable for the requested
+# aspect ratio.
 sub aspect_place_spec {
 	my $self = shift;
 	# If they didn't specify an aspect, return a fully filled setup
@@ -599,7 +667,7 @@ sub on_size {
 sub reset_font_size {
 	my $self = shift;
 	
-	# Don't do anythin if there is no specification
+	# Don't do anything if there is no specification
 	return unless $self->{em_width};
 	
 	my $em_width = $self->{em_width};
@@ -622,15 +690,24 @@ sub reset_font_size {
 =head2 calculate_size
 
 Semi-internal method that computes pixel sizes for a given size
-specification.
+specification. This method expects three argments: a descriptive name, the
+size spec to be processed, and an optional container whose dimensions should
+be used for the column height and width calculations. (If the calculation of
+the size spec fails, the method will fail with a message including the
+descriptive name, which is why it is taken as an argument.)
+
+While writing talks using Prima::Talk, I found that I wanted a wider
+vocabulary of sizes than was available with the standard Prima size specs.
+Generaly, everything in Prima is about pixels, with relative sizes (i.e.
+L<relwidth|/Prima::Widget::place/relwidth>) and foint sizes in
+
+
+XXXXXXXXXXXXXXXXXX
 
 working here - document different size specs; consider allowing special
 specs that can be added as the user sees fit, just like special rendering
 and special footer field extensions
 
-This method expects two argments, the size spec to be processed and an
-optional container whose dimensions should be used for the column height
-and width calculations.
 
 =cut
 
@@ -680,12 +757,16 @@ or C<'12%width'>, can be used. If there is no logo, default dimensions of
 C<'15%width'> and C<'15%height'> are used for the height and width,
 respectively.
 
-If there is a logo and one of the dimensions are specified, the logo's
-size in pixels is used. This is not generally recommended because it will
-occupy diferent fractions of the screen for different screen resolutions,
-and will remain fixed even when the presentation gets resize. For this
-reason, you can specify just one of the dimensions in which case the logo's
-aspect ratio is used to determine the size of the other dimension.
+If there is a logo and none of the dimensions are specified, the logo's
+size in pixels is used. This is not recommended if your talk's size is not
+fixed because it will occupy diferent fractions of the screen for different
+talk sizes. This could be the case, for example, if you give the talk in
+full-screen but on different monitors with different screen resolutions.
+Also, the size in pixels will remain fixed even when the presentation gets
+resize. Under these situations, you should specify just one of the
+dimensions in which case the logo's aspect ratio is used to determine the
+size of the other dimension. You can also specify both dimensions, in which
+case the logo is stretched to the given dimensions.
 
 =cut
 
@@ -736,7 +817,7 @@ sub calculate_decorator_dims {
 Gets or sets the footer height. Called as a getter in scalar context returns
 the height in pixels. Called as a getter in array context returns first the
 pixel height, then the height spec, which is explained below. Called as a
-setter, it sets the height.
+setter, it sets the height spec.
 
 Allowed height specifications are numbers, which are translated as pixel
 heights, or strings with special endings. Special endings include C<"px">,
@@ -795,13 +876,14 @@ footer element, set it to the empty string. If do not want to change an
 element's text, pass in the undefined value for that place in the array.
 
 The strings allow for some basic field interpretation, and the field
-interpretation can be extended by subclassing. If your footer string includes
-the string C<'%s'>, the current slide number will be put in its place. The
-string C<'%n'> will be replaced with the total number of slides. The string
-C<'%%'> will be replaced with a single percent sign. You can add new fields
-by adding methods called C<footer_field_LETTER>, where the letter is what
-you want to override, or by adding anonymous subroutines to your talk object
-with the associated name. When the footer updater gets called, it will call
+interpretation can be extended by subclassing or by per-widget methods. If
+your footer string includes the string C<'%s'>, the current slide number
+will be inserted its place. The string C<'%n'> will be replaced with the
+total number of slides. The string C<'%%'> will be replaced with a single
+percent sign. You can add new fields by adding methods to your subclass
+called C<footer_field_LETTER>, where the letter is what you want to
+override, or by adding anonymous subroutines to your talk object with the
+associated name. When the footer updater gets called, it will call
 your new method if it encounters C<"%LETTER"> in any of your footer strings.
 
 For example:
@@ -823,7 +905,6 @@ For example:
  
  # Use the new footer field
  $talk->footer(undef, '%a', undef);
-
 
 =cut
 
@@ -913,7 +994,7 @@ sub footer_center {
 	$_[0]->footer(undef, $_[1], undef);
 }
 
-# adjust the footer dimenaions and call the paint method
+# adjust the footer dimensions and call the paint method
 sub update_footer {
 	my $self = shift;
 	my $footer_widget = $self->{footer_widget};
@@ -1855,6 +1936,110 @@ sub stash {
 	$self->{stash}->{$key} = $_[0];
 }
 
+=head2 Content rendering
+
+Rendering basic content on your slides is pretty easy, and Prima::Talk::Slide
+provides a number of mechanisms for adding new rendering commands. For
+example, the content arrayref to render some text and an image is
+
+ content => [
+     par => 'Chloe, my cat:',
+     image => 'chloe-on-pillow.jpg',
+     par => 'My dog, Buster:',
+     image => 'buster-drinking-water.png',
+ ],
+
+If you want to have those images centered, you use a hashref with options:
+
+ content => [
+     par => 'Chloe, my cat:',
+     image => {
+         filename => 'chloe-on-pillow.jpg',
+         alignment => ta::Center,
+     },
+     par => 'My dog, Buster:',
+     image => {
+         filename => 'buster-drinking-water.png',
+         alignment => ta::Center,
+     },
+ ],
+
+Most content renderers work with a hashref of arguments, but some (like
+C<par> and C<image> shown above) accept a string and do something sensible
+with it. The expected keys in the hashref are discussed in the documentation
+for each renderer, below.
+
+I often find that the built-in rendering types are not versatile enough for
+my needs. Thankfully, there are many ways to write custom renderings. You
+can begin by using the L<subref|/subref> rendering type, which simply expects
+to get an anonymous subroutine or a subroutine reference. In fact, renderers
+are not required to do anything, let alone render anything, so you could
+simply sprinkle your content arrayref with diagnostic print statements, in
+addition to rendering stuff:
+
+ content => [
+     subref => sub { print "About to render first paragraph\n" },
+     par => 'Chloe, my cat:',
+     subref => sub { print "About to render first image\n" },
+     image => 'chloe-on-pillow.jpg',
+     subref => sub {
+         my ($slide, $container) = @_;
+         # Pack a button
+         $container->insert(Button =>
+             text => 'Click for message',
+             onClick => sub {
+                 Prima::MsgBox::message('Clicked!');
+             },
+             pack => { side => 'top', fill => 'x' },
+         );
+         print "All done!\n"
+     },
+ ],
+
+If you actually want to render something, your subref can choose to either
+invoke the slide's C<render_content> method, or pack the new content on its
+own:
+
+ content => [
+     subref => sub {
+         my ($slide, $container) = @_;
+         # Pack a new widget with a custom
+         # drawing command:
+         $container->insert(Widget =>
+             onDraw => sub {
+                 my ($widget, $canvas) = @_;
+                 my ($height, $width) = $canvas->size;
+                 $canvas->line(0, 0, $height, $width);
+             },
+         );
+     }
+ ],
+
+=over
+
+=item container
+
+The most generic content type is simply an empty container widget. A
+container takes a hashref of arguments with keys that can include a height,
+a width, and a name:
+
+   ...
+   content => [
+     ...
+     container => {
+       height => '10%colheight', name => 'upper_container',
+     },
+     ...
+   ],
+   ...
+
+Containers are mostly useful when they are given a name, thus letting you
+access them and change their contents during transitions. If you simply need
+a spacer, use the L<spacer|/spacer> content type, which is even simpler than
+the container.
+
+=cut
+
 sub render_container {
 	my ($self, $content, $parent_container) = @_;
 	unless (ref($content) and ref($content) eq ref({})) {
@@ -1881,8 +2066,19 @@ sub render_container {
 	return $new_container;
 }
 
+=item par
+
+Renders a paragraph of text. The content renderer expects either a string
+of text to render or a hashref of options which include C<text>, C<color>,
+C<backColor>, C<alignment>, C<autoHeight>, C<wordWrap>, C<pack>, C<name>, 
+C<font_name>, and C<font_factor>. Unless explicitly specified, the alignment
+uses the parent's alignment.
+
+=cut
+
 sub render_par {
 	my ($self, $content, $container) = @_;
+	# XXX Alignment needs to be handled better wrt parent containers.
 	my %params = ( alignment => $self->alignment );
 	if (ref($content)) {
 		%params = (%params, %$content);
@@ -1919,6 +2115,52 @@ sub render_par {
 	$self->store_object_under_name($params{name}, $label);
 	return $label;
 }
+
+=item tex
+
+Renders LaTeX by building a document with the given content and packages,
+running LaTeX on the document, and converting the resulting postscript file
+to a PNG file. The PNG file is cached and the cached version is used if it
+exists. You can use this to your advantage by running the talk on a machine
+with LaTeX and copying the cache files, allowing you to give the talk on a
+machine that does not even have LaTeX installed. The cache string is based
+on a hashing of the tex (and possibly the tex in the C<packages> key, if one
+is supplied).
+
+The argument to tex should be either a string of TeX to render, or a hashref
+with options that include a C<tex> key with the text to render, an optional
+C<packages> key with the tex code containing the package inclusion commands,
+and any raster file rendering options.
+
+I commonly find that the default C<tex> rendering is not what I need. For
+simple talks, the easiest solution is to create a new rendering type that
+invokes the C<tex> renderer with a useful set of defaults:
+
+ # Create the centered_latex renderer
+ sub Prima::Talk::Slide::render_centered_latex {
+     my ($slide, $content, $container) = @_;
+     my ($self, $content, $container) = @_;
+     return $slide->render_tex( {
+         tex => $content,
+         packages => q{
+             \usepackage[T1]{fontenc}
+             \usepackage[latin9]{inputenc}
+             \usepackage{amsmath}
+             \usepackage{babel}
+         },
+         alignment => ta::Center,
+     }, $container);
+ }
+
+I can then simply say C<< centered_latex => '$eqn$' >> and I will get a
+centered equation with my usual math symbols.
+
+The text for the LaTeX packages are placed in the usual location, after the
+article documentclass has been declared but before C<\begin{document}>.
+
+Note: The size of the latex does B<not> change 
+
+=cut
 
 use Digest::MD5 qw(md5_hex);
 sub render_tex {
@@ -1990,6 +2232,16 @@ sub get_image {
 	return $image_cache{$filename};
 }
 
+=item image
+
+Renders an image. The argument should either be a scalar string containing
+the filename to render, or it should be a hashref which can include keys
+C<filename>, and C<name>, as well as widget options C<alignment>, C<pack>,
+C<color> and C<backColor>. Note that you cannot set the image height or
+width; that is based on the pixel size of the image.
+
+=cut
+
 sub render_image {
 	my ($self, $content, $container) = @_;
 	
@@ -2015,6 +2267,13 @@ sub render_image {
 	return $image_viewer;
 }
 
+=item plot
+
+Renders a plot. This content renderer expects a hashref of options, the keys
+of which are passed to a L<Plot|PDL::Graphics::Prima> constructor.
+
+=cut
+
 sub render_plot {
 	my ($self, $content, $container) = @_;
 	require PDL::Graphics::Prima;
@@ -2039,6 +2298,15 @@ sub render_plot {
 	
 	return $plot;
 }
+
+=item two_column
+
+The two column rendering type expects a hashref with options. Keys to set
+the dimensions of the columns include C<left_width>, C<right_width>, and
+C<height>. Keys that specify the content for each column are C<left> and
+C<right>, which should correspond to hashrefs.
+
+=cut
 
 sub render_two_column {
 	my ($self, $content, $container) = @_;
@@ -2117,6 +2385,10 @@ sub render_two_column {
 	$self->store_object_under_name($content->{right_name}, $right_column);
 }
 
+=item spacer
+
+=cut
+
 sub render_spacer {
 	my ($self, $height, $container) = @_;
 	
@@ -2132,6 +2404,10 @@ sub render_spacer {
 	);
 }
 
+=item subref
+
+=cut
+
 sub render_subref {
 	my ($self, $content, $container) = @_;
 	if (ref($content) ne ref(sub {})) {
@@ -2141,6 +2417,10 @@ sub render_subref {
 	$content->($self, $container);
 }
 
+
+=item bullets
+
+=cut
 
 use charnames ':full';
 my $bullet = "\N{BULLET}";
