@@ -4,22 +4,14 @@ use Prima qw(Talk Application);
 
 
 
-my $title = 'Physics-inspired techniques for segmenting human self-reported weight loss time series';
+my $title = 'Example talk!';
 my $window = Prima::MainWindow->new(
 	text => $title,
-#	place => { x => 0, relwidth => 1, y => 0, relheight => 1, anchor => 'sw' },
+	place => { x => 0, relwidth => 1, y => 0, relheight => 1, anchor => 'sw' },
 #	borderIcons => bi::SystemMenu,
 );
 
-
-
-#                      red         green        blue
-my $reversed_purple = ( 70 << 16) | ( 15 << 8) |  94;
-
-# 70, 15, 94
-
-my $talk = #Prima::Talk->new(#
-		$window->insert(Talk =>
+my $talk = $window->insert(Talk =>
    # Fill the application:
    place => {
 		x => 0, relwidth => 1,
@@ -31,65 +23,89 @@ my $talk = #Prima::Talk->new(#
 	em_width => '2%width',
 	toc_color => cl::White,
 	toc_backColor => cl::Black,
-	toc_width => '12%width',
+	toc_width => '10em',
 	title_height => '10%height',
 	backColor => cl::White,
-#	place => {
-#		x => 0, relwidth => 1,
-#		y => 0, relheight => 1,
-#		anchor => 'sw',
-#	},
-#	font => {
-#		name => 'Georgia',
-#	},
-#	em_width => '2%width',
-#	toc_color => cl::White,
-#	toc_backColor => $reversed_purple,
-##	toc_width => 210,
-#	toc_width => '12%width',
-#	title_height => 122,
-#	backColor => cl::White,
 #	aspect => 1,
 );
 
+###################
+# The title slide #
+###################
 
-#####################   Introduction   #
-####################
+# For the title slide, I tend to use a WideSection. I always call the
+# toc_entry "Introduction" because all of the slides after this slide
+# usually contain introductory material, and this makes for a sensible Table
+# of Contents on the left side of the screen.
 
-
-# The title slide
 $talk->add(WideSection =>
 	title => $title,
-	content => 'by David Mertens',
+	# The content is placed below the title. Here I just include my name.
+	# Note that if you include multiple pieces of content, you need to use
+	# a hashref, not a simple string.
+	content => 'This is a WideSection slide, good for title slides',
 	toc_entry => 'Introduction',
 );
 
 
+#####################   Introduction   #####################
+
 $talk->add(Slide =>
-	toc_entry => 'Why?',
-	title => 'Physicists are unusually quantitative.',
+	title => 'Basic slide',
+	toc_entry => 'Basic',
 	content => [
-		par => q{
-			
-		},
+		par => 'This is a basic slide',
+		spacer => '1em',
+		bullets => [
+			'Slide title above',
+			'Footer below',
+			'Table of Contents on the left',
+			'Content (text) is left-justified by default',
+			'This slide in particular illustrates a paragraph, a 1-em
+			 spacer, and a set of bullets. One of the (longer) bullet points
+			 illustrates text wrapping for bullets. :-)',
+		],
 	],
 );
 
-
-$talk->add(Slide =>
-	title => 'intro slide 2',
-	content => 'bar',
+$talk->add(WideSlide =>
+	title => 'Wide slide',
+	content => [
+		par => 'This is a wide slide',
+		spacer => '1em',
+		bullets => [
+			'Slide title above',
+			'Footer below',
+			'Table of Contents is hidden, giving you more real-estate',
+			'Content (text) is left-justified by default',
+			'This slide illustrates a paragraph, a 1-em spacer, and a set of bullets',
+			'Notice that the wider slide lets me use longer text strings without wrapping.',
+		],
+	],
 );
 
-
-$talk->add(WideSlide =>
-	title => 'Another foo!',
-	content => 'wide text!',
+$talk->add(Slide =>
+	title => 'Another Basic Slide',
+	content => 'Returning to a basic slide, we see that the table of
+				contents is restored on the left.',
 );
 
 $talk->add(Section =>
 	title => 'First section',
-	content => 'A Subtitle!',
+	content => [
+		par => 'A Subtitle!',
+		subref => sub {
+			my ($slide, $container) = @_;
+			# Pack a button
+			$container->insert(Button =>
+				text => 'Click for message',
+				onClick => sub {
+					Prima::MsgBox::message('Clicked!');
+				},
+				pack => { side => 'top', fill => 'x' },
+			);
+		},
+	],
 );
 
 
