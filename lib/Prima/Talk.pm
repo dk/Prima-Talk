@@ -16,6 +16,19 @@ use warnings;
 # Also, it would be nice to have vertical fill spacers, and then use an
 # algorithm to determine how many big a vertical fill should be.
 
+# To think about
+# For basic slow-exposure transitions, create a 'pause' renderable that
+# appends all content up to the next 'pause' as a transition. It achieves
+# this by creating its own "transition" subref. It can take options
+# "clear", a boolean, which clears the contents of the current container
+# before proceeding, and "before" and "after" subrefs that get run at the
+# very beginning and very end of the generated transition subref.
+#
+# ** Make this interact nicely with a predefined "transition" by calling it,
+# too.
+#
+# Also think about how to make transition and transitions both get invoked.
+
 =head1 NAME
 
 Prima::Talk - a widget for rendering talks
