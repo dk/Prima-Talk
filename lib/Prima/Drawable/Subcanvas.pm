@@ -2,28 +2,65 @@ package Prima::Drawable::Subcanvas;
 
 use strict;
 use warnings;
-use Prima;
-our @ISA = qw(Prima::Image);
+use Prima qw(noX11 Application);
+our @ISA = qw(Prima::Drawable);
 use Carp;
+
+# Supply a default subcanvas offset:
+sub profile_default {
+	my %def = %{$_[ 0]-> SUPER::profile_default};
+
+	return {
+		%def,
+		subcanvas_offset => [0, 0],
+		width => 1, height => 1, size => [],
+#		color => cl::Black,
+#		backColor => cl::Gray,
+	};
+}
+
+# Graphics properties must be stored internally. Note the font attribute
+# needs to be handled with a tied hash at some point.
+my @properties = qw(backColor color fillWinding fillPattern font lineEnd
+					lineJoin linePattern lineWidth palette rop rop2
+					splinePrecision textOpaque textOutBaseline);
 
 sub init {
 	my $self = shift;
-	my %profile = $self->SUPER::init(@_);
 	
+	# We need to set up the parent canvas before calling the parent initializer
+	# code. This is because the superclass will call the various setters during
+	# its init, and our setters need the parent canvas.
+	my %profile = @_;
 	croak('You must provide a parent canvas')
-		unless exists $profile{parent_canvas};
-	$self->{parent_canvas} = $profile{parent_canvas};
+		unless $self->{parent_canvas} = delete $profile{parent_canvas};
+
+# Set the dimensions; let @size override the others
+$self->width($profile{width});
+$self->height($profile{height});
+$self->size(@{$profile{size}});
+$self->subcanvas_offset(@{$profile{subcanvas_offset}});
 	
-	if (not exists $profile{subcanvas_offset}) {
-		# Set the subcanvas_offset if not supplied
-		$self->subcanvas_offset(0, 0);
-	}
-	else {
-		# Run through the setter to be sure that everything is ok
-		$self->subcanvas_offset(@{$profile{subcanvas_offset}});
-	}
 	
-	return $self;
+	# OK, now we can call the SUPER's init()
+	%profile = $self->SUPER::init(%profile);
+	
+	# For the important properties that follow, use the setters to ensure that
+	# we get validation and/or derived-class overrides.
+	
+	# Set the dimensions; let @size override the others
+	$self->width($profile{width});
+	$self->height($profile{height});
+	$self->size(@{$profile{size}});
+	$self->subcanvas_offset(@{$profile{subcanvas_offset}});
+	
+	# Set any properties specified in the constructor
+#	for my $prop (@properties) {
+#		$self->$prop($profile{$prop}) if exists $profile{$prop};
+#print "Setting $prop to $profile{$prop}\n" if exists $profile{$prop};
+#	}
+	
+	return %profile;
 }
 
 sub fixup_rect {
@@ -35,11 +72,42 @@ sub fixup_rect {
 	return @rect;
 }
 
+sub width {
+	return shift->{width} if @_ == 1;
+	my ($self, $new_width) = @_;
+	croak("subcanvas width must be positive") unless $new_width > 0;
+	$self->{width} = $new_width;
+}
+
+sub height {
+	return shift->{height} if @_ == 1;
+	my ($self, $new_height) = @_;
+	croak("subcanvas height must be positive") unless $new_height > 0;
+	$self->{height} = $new_height;
+}
+
+sub size {
+	my $self = shift;
+	return ($self->width, $self->height) if @_ == 0;
+	croak('subcanvas size must have two arguments') unless @_ == 2;
+	my ($width, $height) = @_;
+	$self->width($width);
+	$self->height($height);
+	return ($width, $height);
+}
+
 sub subcanvas_offset {
 	my ($self, @new_offset) = @_;
-	return @{$self->{subcanvas_offset}} unless @new_offset;
-	$self->{subcanvas_offset} = \@new_offset;
-	return @new_offset;
+	# Handle the setter code, which is independent of vitality
+	if (@new_offset) {
+		$self->{subcanvas_offset} = \@new_offset;
+		return @new_offset;
+	}
+	# Are we inquiring about the offset while setting up? If so, we may not have
+	# set the offset:
+	return (0, 0) if $self->alive == 2;
+	# Otherwise, return the attribute.
+	return @{$self->{subcanvas_offset}};
 }
 
 sub subcanvas_rect {
@@ -52,7 +120,7 @@ sub subcanvas_rect {
 	}
 	else {
 		my ($left, $bottom) = $self->subcanvas_offset;
-		return ($left, $bottom, $left + $self->width, $bottom + $self->heigh);
+		return ($left, $bottom, $left + $self->width, $bottom + $self->height);
 	}
 }
 
@@ -67,11 +135,6 @@ sub end_paint {
 	$_[0]->{parent_canvas}->end_paint;
 }
 
-# Graphics properties must be stored internally. Note the font attribute
-# needs to be handled with a tied hash at some point.
-my @properties = qw(backColor color fillWinding fillPattern font lineEnd
-					lineJoin linePattern lineWidth palette rop rop2
-					splinePrecision textOpaque textOutBaseline);
 for my $prop_name (@properties) {
 	# Build the sub to handle the getting and setting of the property.
 	no strict 'refs';
@@ -79,7 +142,10 @@ for my $prop_name (@properties) {
 		use strict 'refs';
 		my $self = shift;
 		
-print "parent canvas is $self->{parent_canvas}\n";
+		# Indicate the property name subref we're writing (thanks to
+		# http://www.perlmonks.org/?node_id=304883 for the idea)
+		*__ANON__ = $prop_name;
+
 		# Called as getter?
 		if (@_ == 0) {
 			# Return the internal value, or the parent's value if not set
@@ -99,10 +165,10 @@ print "parent canvas is $self->{parent_canvas}\n";
 			}
 			else {
 				# Called as clearer
-				$self->{parent_canvas}->$prop_name(
-					$self->{"backup_$prop_name"}
-				);
 				delete $self->{$prop_name};
+				return $self->{parent_canvas}->$prop_name(
+					delete $self->{"backup_$prop_name"}
+				) if exists $self->{"backup_$prop_name"};
 			}
 		}
 	};
@@ -123,7 +189,10 @@ for my $primitive_name (@primitives) {
 		use strict 'refs';
 		my ($self, @args_for_method) = @_;
 		
-print "drawing $primitive_name on subcanvas\n";
+		# Indicate the name of the subref we're writing (thanks to
+		# http://www.perlmonks.org/?node_id=304883 for the idea)
+		*__ANON__ = $primitive_name;
+
 		# Begin by ensuring that the clipping and translation are enforced:
 		$self->clipRect($self->clipRect);
 		$self->translate($self->translate);
@@ -164,6 +233,17 @@ sub clipRect {
 	if (not @new_rect) {
 		return @{$self->{clipRect}} if $self->{clipRect};
 		return (0, 0, $self->size);
+	}
+	
+	# Clearer will supply a single undefined value:
+	if (@new_rect == 1 and not defined $new_rect[0]) {
+		delete $self->{clipRect};
+		# Don't do anything unless we *have* something to restore
+		return $self->{parent_canvas}->clipRect
+			unless exists $self->{backup_clipRect};
+		# Clear the backed-up value from our memory and restore it.
+		my $restored_rect = delete $self->{backup_clipRect};
+		return $self->{parent_canvas}->clipRect(@{$restored_rect});
 	}
 	
 	# Don't set unless we're in paint mode
@@ -209,12 +289,23 @@ sub translate {
 		return (0, 0);
 	}
 	
+	# Clearer will supply a single undefined value:
+	if (@new_trans == 1 and not defined $new_trans[0]) {
+		delete $self->{translate};
+		# Don't do anything unless we *have* something to restore
+		return $self->{parent_canvas}->translate
+			unless exists $self->{backup_translate};
+		# Clear the backed-up value from our memory and restore it.
+		my $restored_trans = delete $self->{backup_translate};
+		return $self->{parent_canvas}->translate(@{$restored_trans});
+	}
+	
 	# Don't set unless we're in paint mode
-	return unless $self->{parent_canvas}->get_paint_state;
+#	return unless $self->{parent_canvas}->get_paint_state;
 	
 	# Backup and store
 	$self->{backup_translate} ||= [$self->{parent_canvas}->translate];
-	$self->{translate} = \@new_trans;
+	$self->{translate} = [@new_trans];
 	
 	# Apply (to the parent's canvas)
 	my @subcanvas_rect = $self->subcanvas_rect;
@@ -236,11 +327,11 @@ sub AUTOLOAD {
 	
 	my $parent_canvas = $self->{parent_canvas};
 	if (my $subref = $parent_canvas->can($called)) {
-		# Set the clip rectangle and translation
-		$self->prepare_canvas;
+#		# Set the clip rectangle and translation
+#		$self->prepare_canvas;
 		# Perform the drawing operation
 		$subref->($parent_canvas, @_);
-		# Restore the previous clip rectangle and translation
+#		# Restore the previous clip rectangle and translation
 	}
 	else {
 		die "Don't know how to $called\n";
@@ -250,7 +341,8 @@ sub AUTOLOAD {
 sub restore_parent {
 	my $self = shift;
 	my @props = map { /^backup_(.*)/ ? ($1) : () } keys %$self;
-	# Undefine all the backed-up props
+	# Restore all the backed-up props; all properties have special handling for
+	# a single undefined value.
 	$self->$_(undef) for (@props);
 }
 
@@ -258,22 +350,24 @@ sub Prima::Drawable::paint_with_widgets {
 	my ($self, $canvas) = @_;
 	
 	# Always paint self directly on the canvas
+	$canvas->begin_paint;
 	$self->notify('Paint', $canvas);
+	$::application->yield;
 	
 	for my $widget ($self->get_widgets) {
 		next if not defined $widget;
-		# Get the corner and the extent
-		my ($left, $bottom) = $widget->origin;
-		my ($width, $height) = $widget->size;
 		# Paint the children on their own subcanvases
-print join(', ', $left, $bottom, $left + $width, $bottom + $height), "\n";
-		my $subcanvas = Prima::Drawable::Subcanvas->create(
+		my $subcanvas = Prima::Drawable::Subcanvas->new(
 			parent_canvas => $canvas,
-			subcanvas_offset => [$left, $bottom],
-								
+			subcanvas_offset => [$widget->origin],
+			size => [$widget->size],
+			owner => $widget,
+#			(map { $_ => $widget->$_ } (@properties)),
 		);
 		$widget->paint_with_widgets($subcanvas);
+		$subcanvas->restore_parent;
 	}
+	$canvas->end_paint;
 }
 
 1;

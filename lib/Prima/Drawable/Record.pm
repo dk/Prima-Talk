@@ -50,6 +50,67 @@ sub get_record {
 	return $self->{record};
 }
 
+my %apply_translate = (
+	(map { $_ => \&trans_first_pair } qw( arc chord ellipse fill_chord
+		fill_ellipse fill_sector flood_fill pixel put_image sector stretch_image )),
+	(map { $_ => \&trans_rect } qw( bar line rect3d rect_rocus rectangle )),
+	(map { $_ => \&trans_array_ref } qw( fillpoly fill_spline lines polyline spline )),
+	draw_text => sub {
+		my ($dx, $dy, $canvas, $text, $x1, $y1, $x2, $y2, @args) = @_;
+		return ($canvas, $text, $x1 + $dx, $y1 + $dy, $x2 + $dx, $y2 + $dy, @args);
+	},
+	put_image_indirect => sub {
+		my ($dx, $dy, $object, $x, $y, @args) = @_;
+		return ($object, $x + $dx, $y + $dy, @args);
+	},
+	text_out => sub {
+		my ($dx, $dy, $text, $x, $y) = @_;
+		return ($text, $x + $dx, $y + $dy);
+	},
+);
+sub trans_first_pair {
+	my ($dx, $dy, $x, $y, @args);
+	return ($x + $dx, $y + $dy, @args);
+}
+sub trans_rect {
+	my ($dx, $dy, $left, $bottom, $right, $top, @args) = @_;
+	return ($left + $dx, $bottom + $dy, $right + $dx, $top + $dy, @args);
+}
+sub trans_array_ref {
+	my ($dx, $dy, $array_ref) = @_;
+	my ($d_this, $d_next) = ($dx, $dy);
+	my @to_return;
+	for my $position (@$array_ref) {
+		push @to_return, $position + $d_this;
+		($d_this, $d_next) = ($d_next, $d_this);
+	}
+	return \@to_return;
+}
+
+sub search_record {
+	my ($self, $draw_command, %preferences) = @_;
+	my @record = @{$self->{record}};
+	my %state;
+	my @to_return;
+	for my $line (@record) {
+		# Unpack the line; skip if it's only an accessor
+		my ($command, @args) = @$line;
+		next if not @args;
+		# Apply translation if this is a command, requested and appropriate
+		if (exists $apply_translate{$command}
+			and $preferences{apply_translate}
+			and exists $state{translate}
+		) {
+			@args = $apply_translate{$command}->(@{$state{translate}}, @args);
+		}
+		# Store the arguments (both for state and for the command)
+		$state{$command} = \@args;
+		# Push a copy of the state if this line is a command we want
+		push @to_return, {%state} if $command eq $draw_command;
+	}
+	return @to_return;
+}
+
 sub clear_record {
 	my $self = shift;
 	$self->{record} = [];
