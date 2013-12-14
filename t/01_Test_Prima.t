@@ -36,15 +36,15 @@ or pass('Nonexistent color names croak');
 test_out('not ok 1 - Prima colors are equal');
 test_fail(+4);
 test_err('/#\s*Prima color mismatch/');
-test_err(sprintf '/#\s*got: %06x/', cl::Green);
-test_err(sprintf '/#\s*expected: %06x/', cl::Blue);
+test_err(sprintf '/#\s*got: %06x \(.*\)/', cl::Green);
+test_err(sprintf '/#\s*expected: %06x \(.*\)/', cl::Blue);
 is_prima_color(cl::Green, cl::Blue);
 test_test('Color mismatch is clearly explained');
 
 test_out('not ok 1 - Prima colors are equal');
 test_fail(+4);
 test_err('/#\s*Prima color mismatch/');
-test_err(sprintf('/#\s*got: %06x/', cl::Green));
+test_err(sprintf('/#\s*got: %06x \(.*\)/', cl::Green));
 test_err(sprintf('/#\s*expected: %06x \(Blue\)/', cl::Blue));
 is_prima_color(cl::Green, 'Blue');
 test_test('Named colors are used if available');
