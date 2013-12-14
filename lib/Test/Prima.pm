@@ -42,6 +42,7 @@ sub is_prima_color {
 
 sub _get_color_number_and_name {
 	my $expected = shift;
+	my $tb = Test::Prima->builder;
 	
 	# I allow the user to specify a color by name, which makes the diagnostics
 	# a lot cleaner. But we have to make sure that the name exists, and then get
@@ -56,12 +57,12 @@ sub _get_color_number_and_name {
 			or $expected eq 'constant'
 			or $expected eq 'AUTOLOAD'
 		) {
-			Test::Prima->builder->croak("Unkown color name $expected");
+			$tb->croak("Unkown color name $expected");
 		}
 		# I wish I could get rid of this string eval, but I don't know how to
 		# get at the value of a compile-time constant otherwise. :-(
 		$expected_number = eval "cl::$expected";
-		Test::Prima->builder->croak("Unkown color name $expected") if $@;
+		$tb->croak("Unkown color name $expected") if $@;
 		
 		$expected_name = $expected;
 	}
@@ -73,9 +74,9 @@ sub _describe_color_mismatch {
 	my ($got, $expected_number, $expected_name) = @_;
 	
 	return '' if $got == $expected_number;
-	return sprintf('         got: %06x', $got), "\n",
+	return sprintf('         got: %06x', $got), " ($got)\n",
 			sprintf('    expected: %06x%s', $expected_number,
-				($expected_name ? " ($expected_name)" : ''));
+				($expected_name ? " ($expected_name)" : " ($expected_number)"));
 }
 
 sub is_prima_image {
@@ -167,6 +168,20 @@ numerical equality. The C<$expected> value can be a Color, or it can be a color
 name, i.e. the string C<'Black'> for the color C<cl::Black>. If the values
 disagree, having the color I<name> makes for a slightly clearer diagnostic
 message.
+
+This test method does not truncate floating point numbers. This may be a minor
+issue of you write your tests using random numbers, since C<rand()> creates
+random floating point values. The best way to generate a random color is to
+truncate it with C<int()>:
+
+ my $rand_color = int(rand(cl::White));
+
+Prima itself does not car if you pass non-integer color values to the color
+setters, but I thought it would be appropriate to be a little more rigid for
+testing purposes. After all, if you need to build a long list of random colors,
+just use a map:
+
+ my @rand_colors = map {int(rand(cl::White))} (1 .. $N_colors);
 
 =item is_prima_image
 
