@@ -149,7 +149,7 @@ sub paint_window {
 
 sub other_init {}
 
-My::Basic->run_test;
+__PACKAGE__->run_test;
 
 =observations
 
@@ -207,7 +207,7 @@ sub paint_window {
 	$canvas->line(0, 0, $self->width, $self->height);
 }
 
-My::Translated->run_test;
+__PACKAGE__->run_test;
 
 =observations
 
@@ -220,6 +220,164 @@ differ in their colors. (In case that exchange passes, you can set the
 pixel at (0, 0) to different colors, as is done in the commented-out
 call to C<pixel()> in the manual and window-based drawing.)
 
+
+=cut back
+
+########################################################################
+                             package
+                        My::Translated::Pix;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Translated pixel draw without widgets' }
+sub short_name { 'translated_pixel_draw' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(5, 10);
+	$image->pixel(-5, -10, cl::Blue);
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->pixel(0, 0, cl::Blue);
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+This test demonstrates that the pixel location CARES ABOUT THE CURRENT
+TRANSLATE! WHAT?! I thought tha pixel handling was independent of
+translate, but clearly this is not the case.
+
+=cut back
+
+########################################################################
+                             package
+                        My::Translated::EndPaint;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Translated then restarted pixel draw without widgets' }
+sub short_name { 'translated_restarted_pixel_draw' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(5, 10);
+	$image->end_paint;
+	$image->begin_paint;
+	$image->pixel(0, 0, cl::Blue);
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->pixel(0, 0, cl::Blue);
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+This test demonstrates that any translation information is lost after
+the C<end_paint()> method is called.
+
+=cut back
+
+########################################################################
+                             package
+                        My::Translated::ClipRect;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Translated+clipRect+clear, without widgets' }
+sub short_name { 'translated_cliprect_clear' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(5, 10);
+	$image->clipRect(0, 0, $image->size);
+	$image->backColor(cl::Blue);
+	$image->clear;
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->clipRect(5, 10, $canvas->size);
+	$canvas->backColor(cl::Blue);
+	$canvas->clear;
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+This test demonstrates that even C<clipRect()> pays attention to the current
+translate! For purposes of subcanvas work, this means that it's not possible to
+get the correct (translated) clipRect after a call to translate, because THERE
+IS NO WAY TO DETERMINE THE TRANSLATION THAT WAS IN PLACE WHEN clipRect WAS
+CALLED. However, see the next test for why this is not really much of a problem.
+
+=cut back
+
+########################################################################
+                             package
+                   My::Translated::ClipRect::Repeated;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Translated+clipRect+begin/end paint, without widgets' }
+sub short_name { 'translated_cliprect_end_begin_paint' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(5, 10);
+	$image->clipRect(0, 0, $image->size);
+	printf "translated clipRect was (%d, %d) -> (%d, %d)\n", $image->clipRect;
+	$image->end_paint;
+	
+	$image->begin_paint;
+	printf "translated clipRect is (%d, %d) -> (%d, %d)\n", $image->clipRect;
+	$image->backColor(cl::Blue);
+	$image->clear;
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->clipRect(5, 10, $canvas->size);
+	printf "untranslated clipRect was (%d, %d) -> (%d, %d)\n", $canvas->clipRect;
+	$canvas->end_paint;
+	
+	$canvas->begin_paint;
+	printf "untranslated clipRect is (%d, %d) -> (%d, %d)\n", $canvas->clipRect;
+	$canvas->backColor(cl::Blue);
+	$canvas->clear;
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+Now for some good news. This test demonstrates that when we begin painting anew,
+the value of translate is set back to (0, 0), and the clipRect is set to the
+whole canvas. This is good news for the subcanvas work, as it means
+paint_with_widgets knows how to prepare the subcanvas before it begins its work.
 
 =cut back
 
