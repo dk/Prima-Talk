@@ -6,7 +6,7 @@ use Prima qw(Application);
 
 ########################################################################
                              package
-                           My::Basic;
+                            My::Basic;
 ########################################################################
 use Test::More;
 use Test::Prima;
@@ -348,11 +348,11 @@ sub draw_manual {
 	$image->clear;
 	$image->translate(5, 10);
 	$image->clipRect(0, 0, $image->size);
-	printf "translated clipRect was (%d, %d) -> (%d, %d)\n", $image->clipRect;
+	#printf "translated clipRect was (%d, %d) -> (%d, %d)\n", $image->clipRect;
 	$image->end_paint;
 	
 	$image->begin_paint;
-	printf "translated clipRect is (%d, %d) -> (%d, %d)\n", $image->clipRect;
+	#printf "translated clipRect is (%d, %d) -> (%d, %d)\n", $image->clipRect;
 	$image->backColor(cl::Blue);
 	$image->clear;
 	$image->end_paint;
@@ -361,11 +361,11 @@ sub paint_window {
 	my ($self, $window, $canvas) = @_;
 	$canvas->clear;
 	$canvas->clipRect(5, 10, $canvas->size);
-	printf "untranslated clipRect was (%d, %d) -> (%d, %d)\n", $canvas->clipRect;
+	#printf "untranslated clipRect was (%d, %d) -> (%d, %d)\n", $canvas->clipRect;
 	$canvas->end_paint;
 	
 	$canvas->begin_paint;
-	printf "untranslated clipRect is (%d, %d) -> (%d, %d)\n", $canvas->clipRect;
+	#printf "untranslated clipRect is (%d, %d) -> (%d, %d)\n", $canvas->clipRect;
 	$canvas->backColor(cl::Blue);
 	$canvas->clear;
 }
@@ -380,5 +380,143 @@ whole canvas. This is good news for the subcanvas work, as it means
 paint_with_widgets knows how to prepare the subcanvas before it begins its work.
 
 =cut back
+
+########################################################################
+                             package
+                       My::ClipRect::Negative;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Translated+negative-clipRect, without widgets' }
+sub short_name { 'negative_cliprect' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(10, 10);
+	$image->clipRect(-10, -10, $image->size);
+	$image->backColor(cl::Blue);
+	$image->clear;
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->translate(10, 10);
+	$canvas->clipRect(0, 0, $canvas->size);
+	$canvas->backColor(cl::Blue);
+	$canvas->clear;
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+This test demonstrates that C<clipRect()> silently converts negative values to
+zero BEFORE APPLYING THE TRANSLATION. Thus, you cannot "adjust" for a
+translation by specifying a negative offset like you can with the drawing
+primitives.
+
+=cut back
+
+########################################################################
+                             package
+                   My::Translated::Negative::Pixel;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Negative translation works with pixel() as expected' }
+sub short_name { 'negative_translated_pixel' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(-10, -10);
+	$image->pixel(20, 20, cl::Blue);
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->pixel(10, 10, cl::Blue);
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+This test demonstrates the negative translations work as we would expect them
+to work with drawing primitives, such as pixel().
+
+=cut back
+
+########################################################################
+                             package
+                  My::Translated::Negative::ClipRect;
+########################################################################
+use Test::More;
+
+our @ISA = 'My::Basic';
+sub test_name { 'Negative translation has weird effects on clipRect' }
+sub short_name { 'negative_translated_cliprect' }
+sub draw_manual {
+	my $self = shift;
+	my $image = $self->{manual_drawn_image};
+	$image->begin_paint;
+	$image->clear;
+	$image->translate(-10, -15);
+	$image->clipRect(10, 10, $image->width + 50, $image->height + 50);
+	$image->backColor(cl::Blue);
+	$image->clear;
+	$image->end_paint;
+}
+sub paint_window {
+	my ($self, $window, $canvas) = @_;
+	$canvas->clear;
+	$canvas->clipRect(10, 10, $canvas->width - 11, $canvas->height - 16);
+	$canvas->backColor(cl::Blue);
+	$canvas->clear;
+}
+
+__PACKAGE__->run_test;
+
+=observations
+
+This test seems to demonstrate that NEGATIVE TRANSLATIONS ARE APPLIED VERY
+STRANGELY TO THE CLIPPING RECTANGLE. The upper right corner of the clipRect is
+truncated assuming that it cannot exceed the canvas size, but then its actual
+location is translated. In contrast, the lower left corner does not pay any
+attention to the translation.
+
+=cut back
+
+################################################################################
+                                package main;
+################################################################################
+
+# some basic drawable interface tests
+use Test::More;
+
+my $image = Prima::Image->new(width => 20, height => 20);
+$image->begin_paint;
+
+# Demonstrate clipRect's truncation of sizes that go outside the boundaries
+$image->clipRect(-5, -5, 40, 40);
+is_deeply([$image->clipRect], [0, 0, 19, 19], 'clipRect truncates clipRect');
+
+# Demonstrate how translate effects the truncation
+$image->translate(10, 10);
+$image->clipRect(-5, -5, 40, 40);
+is_deeply([$image->clipRect], [0, 0, 19, 19],
+	'clipRect truncates clipRect the same after translate, even though it should not');
+
+# Does translation allow negative (if unrendered) values?
+$image->translate(-10, -10);
+is_deeply([$image->translate], [-10, -10], 'translate accepts negative values');
+
 
 done_testing;
