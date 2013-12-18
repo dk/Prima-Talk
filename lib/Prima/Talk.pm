@@ -930,6 +930,10 @@ For example:
  # Use the new footer field
  $talk->footer(undef, '%a', undef);
 
+To expand on this, you could create a new field that delegates to slides for
+content. This provides one of multiple methods for having per-slide
+customization in your footer.
+
 =cut
 
 sub footer {
@@ -974,7 +978,7 @@ sub process_footer_text {
 				$to_return .= $self->{"footer_field_$char"}->($self);
 			}
 			else {
-				carp("No method for interpreting $element");
+				carp("No method for interpreting footer $element");
 				$to_return .= $element;
 			}
 		}
