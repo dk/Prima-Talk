@@ -242,6 +242,7 @@ is ignored.
 
 use Prima qw(Label ImageViewer MsgBox FileDialog);
 use Prima::PS::Drawable;
+use Prima::Drawable::Subcanvas;
 
 package Prima::Talk;
 # Primary package, which describes a widget that holds all the Talk data,
@@ -317,13 +318,12 @@ sub goto_slide_dialog {
 	$self->slide($slide_number);
 }
 
-
-
 # working here - this does not quite work quite right. :-(
 sub print_current_slide {
 	# Get the filename as an argument, or from the save-as dialog.
 	my $self = shift;
 	my $filename;
+	$::application->pointer(cr::Wait);
 	
 	unless ($filename) {
 		my $save_dialog = Prima::SaveDialog-> new(
@@ -340,18 +340,20 @@ sub print_current_slide {
 	}
 	unlink $filename if -f $filename;
 	
+print "Creating postscript canvas to save to $filename\n";
 	# Create the postscript canvas
 	my $ps = Prima::PS::Drawable-> create( onSpool => sub {
 			open my $fh, ">>", $filename;
 			print $fh $_[1];
 			close $fh;
 		},
-		pageSize => [$self->size],
+		pageSize => [$self->{aspect_container}->size],
 		pageMargins => [0, 0, 0, 0],
 	);
 	$ps->resolution($self->resolution);
 	$ps->font(size => 16);
 	
+print "Initializing the canvas\n";
 	# Initialize the canvas
 	$ps->begin_doc
 		or do {
@@ -367,22 +369,11 @@ sub print_current_slide {
 		};
 	
 	# If we're good to go, draw on it
-	my @widgets = ($self);
-	while(@widgets) {
-		my $widget = shift @widgets;
-#		$widget->on_paint($ps);
-		$widget->begin_paint_info;
-		$widget->notify('Paint', $ps);
-		$widget->end_paint_info;
-		push @widgets, $widget->get_widgets;
-	}
-	
-	# Block until everything is done drawing
-	my $still_waiting = 1;
-	post(sub { $still_waiting = 0 });
-	$::application->yield while $still_waiting;
-	
+print "Painting widgets on the canvas\n";
+	$self->{aspect_container}->paint_with_widgets($ps);
+print "All done creating the postscript\n";
 	$ps->end_doc;
+	$::application->pointer(cr::Default);
 }
 
 # Returns a list of "place" key/value pairs suitable for the requested
