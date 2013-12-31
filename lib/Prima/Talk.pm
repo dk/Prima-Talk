@@ -31,7 +31,7 @@ use warnings;
 
 =head1 NAME
 
-Prima::Talk - a widget for rendering talks
+Prima::Talk - a widget for rendering presentations and talks
 
 =head1 SYNOPSIS
 
@@ -1042,10 +1042,10 @@ sub container {
 
 =head2 toc_width
 
-Gets/sets the table-of-contents container width. In set mode, triggers a
-slide redraw. In get mode, the scalar return value is computed width in
-pixels; in list context it retrns the computed width followed by the width
-spec string.
+Gets/sets the table-of-contents container width. This can be used to set the
+width, but it is no more than a wrapper around L</toc_width_spec> (and therefore
+it triggers a slide redraw). In get mode, this returns the computed width in
+pixels. To get the spec string, see L</toc_width_spec>.
 
 =cut
 
@@ -1060,6 +1060,14 @@ sub toc_width {
 	$self->toc_width_spec(@_);
 }
 
+=head2 toc_width_spec
+
+Gets/sets the table-of-contents container width spec. The setter accepts a spec
+string and applies it immediately, issuing a slide redraw. The getter simply
+returns the spec string currently in use.
+
+=cut
+
 sub toc_width_spec {
 	my $self = shift;
 	return $self->{toc_width} if @_ == 0;
@@ -1070,7 +1078,6 @@ sub toc_width_spec {
 	
 	# Issue  reslide
 	$self->reslide;
-	
 }
 
 =head2 toc_indent
