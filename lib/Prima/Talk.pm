@@ -297,6 +297,7 @@ sub profile_default
 		title_font_ratio => 2,
 		toc_backColor => cl::White,
 		toc_color => cl::Black,
+		toc_font_ratio => 1,
 		padding => 10,
 		footer => [$today, '', '%s / %n'],
 		footer_height => '1.5em',
@@ -436,8 +437,8 @@ sub init {
 	
 	# Copy basic properties
 	for my $prop_name ( qw(
-		toc_indent toc_color toc_backColor title_font_ratio em_width footer
-		aspect
+		toc_indent toc_color toc_backColor toc_font_ratio title_font_ratio
+		em_width footer aspect
 	) ) {
 		$self->{$prop_name} = $profile{$prop_name};
 	}
@@ -472,7 +473,7 @@ sub init {
 	$self->footer(@{$profile{footer}});
 	
 	# set the toc_height based on the current font height
-	$self->{toc_height} = $self->font->{size} * 1.75;
+	$self->{toc_height} = $self->font->{size} * $self->{toc_font_ratio};
 	
 	# if they specified a toc_width or title_height, use it
 	$self->{toc_width} = $profile{toc_width} if exists $profile{toc_width};
@@ -1094,6 +1095,49 @@ sub toc_indent {
 	$self->{toc_indent} = $indent;
 	
 	$self->update_toc;
+}
+
+=head2 toc_font_ratio
+
+Gets/sets the table-of-contents' font size as a ratio of the default slide font
+size. Font sizes in Prima are in whole numbers, so you may not actually get your
+requested ratio. The method L</toc_real_font_ratio> will give you the actual
+ratio of the fonts in use.
+
+=cut
+
+use Scalar::Util;
+
+sub toc_font_ratio {
+	return shift->{toc_font_ratio} if @_ == 1;
+	my ($self, $new_ratio) = @_;
+	# Sanity check the new ratio
+	if (not Scalar::Util::looks_like_number($new_ratio)) {
+		carp("toc_font_ratio `$new_ratio' does not look like a number; ignoring");
+		return;
+	}
+	if ($new_ratio <= 0) {
+		carp("toc_font_ratio `$new_ratio' is not positive; ignoring");
+		return;
+	}
+	$self->{toc_font_ratio} = $new_ratio;
+	$self->{toc_height} = $self->font->size * $new_ratio;
+	# XXXXXXXXXXXXXXXXXXXXXXXXX
+	# Does the above do what I mean?
+}
+
+=head2 toc_real_font_ratio
+
+Because the font sizes are integers, it's not possible to represent the exact
+ratio you specify when setting C<toc_font_ratio> (unless you happen to pick
+something easy like 0.5). If you must know the actual ratio, this method will
+give it to you.
+
+=cut
+
+sub toc_real_font_ratio {
+	my $self = shift;
+	return $self->{toc_height} / $self->font->size;
 }
 
 =head2 toc_visible
