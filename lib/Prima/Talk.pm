@@ -1205,8 +1205,8 @@ sub slide {
 	# Handle the special case of undef, in which case we simply tear down
 	# the currently selected slide, if any.
 	if (not defined $number) {
-		$self->slides->[$self->{curr_slide}]->tear_down
-			if defined $self->{curr_slide};
+		my @slides = $self->slides;
+		$slides[$self->{curr_slide}]->tear_down if defined $self->{curr_slide};
 		$self->{curr_slide} = undef;
 		return;
 	}
