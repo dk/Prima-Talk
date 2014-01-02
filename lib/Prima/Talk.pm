@@ -937,6 +937,9 @@ sub footer {
 	$footer[0] = $left if defined $left;
 	$footer[1] = $center if defined $center;
 	$footer[2] = $right if defined $right;
+	
+	# Finally, store the resulting footer data
+	$self->{footer} = \@footer;
 }
 
 sub footer_field_s {
