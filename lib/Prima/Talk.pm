@@ -428,7 +428,7 @@ sub init {
 	
 	# Copy basic properties
 	for my $prop_name ( qw(
-		toc_indent toc_color toc_backColor toc_font_ratio title_font_ratio
+		toc_indent toc_color toc_backColor title_font_ratio
 		em_width footer aspect
 	) ) {
 		$self->{$prop_name} = $profile{$prop_name};
@@ -459,12 +459,10 @@ sub init {
 	# Keep the aspect container's font size in line, too:
 	$aspect_container->font->size($self->font->size);
 	
-	# Run the footer height through the spec
+	# Run the footer and toc heights through the setters
 	my $footer_height = $self->footer_height($profile{footer_height});
 	$self->footer(@{$profile{footer}});
-	
-	# set the toc_height based on the current font height
-	$self->{toc_height} = $self->font->{size} * $self->{toc_font_ratio};
+	$self->toc_font_ratio($profile{toc_font_ratio});
 	
 	# if they specified a toc_width or title_height, use it
 	$self->{toc_width} = $profile{toc_width} if exists $profile{toc_width};
@@ -515,6 +513,12 @@ sub init {
 			rely => 1, y => -$title_height,
 			height => $title_height, anchor => 'sw',
 		},
+		font => {
+			name     => $self->font->name,
+			height   => $title_height,
+			style    => $self->font->style,
+			encoding => $self->font->encoding,
+		},
 		width => $aspect_container->width - $toc_width,
 		color => $self->{toc_color},
 		backColor => $self->{toc_backColor},
@@ -524,8 +528,6 @@ sub init {
 		onMouseEnter => sub { $::application->pointerVisible(0) },
 		onMouseLeave => sub { $::application->pointerVisible(1) },
 	);
-	$self->{title_label}->font->size(
-		$self->{title_label}->font->size * $self->{title_font_ratio} );
 	
 	# Add the lower container
 	my $lower_container = $self->{lower_container}
@@ -580,8 +582,8 @@ sub init {
 			
 			$footer_widget->begin_paint;
 			$footer_widget->clear;
-			my $height = $self->footer_height;
-			my $font_height = $self->font->height;
+			my $height = $footer_widget->height;
+			my $font_height = $footer_widget->font->height;
 			my $vert_offset = ($height - $font_height) / 2;
 			
 			# Paint left footer
@@ -629,9 +631,9 @@ sub on_size {
 	# See if the font needs recalibrating
 	if ($self->{em_width} and $self->{em_width} =~ /%/) {
 		$self->reset_font_size;
-		$self->{title_label}->font->size(
-			$self->font->size * $self->{title_font_ratio}
-		);
+#		$self->{title_label}->font->size(
+#			$self->font->size * $self->{title_font_ratio}
+#		);
 	}
 
 	# Update the layout
@@ -649,6 +651,7 @@ sub on_size {
 			height => $title_height, anchor => 'sw',
 	);
 	$self->{title_label}->width($width - $toc_width);
+	$self->{title_label}->font->height($title_height);
 	# Lower container
 	$self->{lower_container}->place(height => -$title_height);
 	# Update the widths of the table of contents, main container, footer
@@ -806,7 +809,7 @@ sub calculate_decorator_dims {
 	# No logo is also fairly simple; unspecified dims revert to defaults
 	if (not $self->{logo}) {
 		my $toc_width = $self->{toc_width} || '15%width';
-		my $title_height = $self->{toc_height} || '15%height';
+		my $title_height = $self->{title_height} || '15%height';
 		return (
 			$self->calculate_size(toc_width => $toc_width),
 			$self->calculate_size(title_height => $title_height)
@@ -1022,6 +1025,7 @@ sub update_footer {
 	my $self = shift;
 	my $footer_widget = $self->{footer_widget};
 	$footer_widget->height($self->{footer_height_px});
+	$footer_widget->font->height($self->{footer_height_px});
 	$footer_widget->notify("Paint");
 }
 
@@ -1115,9 +1119,12 @@ sub toc_font_ratio {
 		return;
 	}
 	$self->{toc_font_ratio} = $new_ratio;
-	$self->{toc_height} = $self->font->size * $new_ratio;
-	# XXXXXXXXXXXXXXXXXXXXXXXXX
-	# Does the above do what I mean?
+	
+	# Get the nearest height that can actually be realized with this font
+	$self->begin_paint_info;
+	$self->font->height($self->font->size * $new_ratio);
+	$self->{toc_font_height} = $self->font->height;
+	$self->end_paint_info;
 }
 
 =head2 toc_real_font_ratio
@@ -1131,7 +1138,7 @@ give it to you.
 
 sub toc_real_font_ratio {
 	my $self = shift;
-	return $self->{toc_height} / $self->font->size;
+	return $self->{toc_font_height} / $self->font->size;
 }
 
 =head2 toc_visible
@@ -1294,7 +1301,9 @@ sub slide {
 
 =head2 title_font_ratio
 
-Get/set the title font ratio, the ratio of the title font to the normal font.
+Get/set the title font ratio, the ratio of the WideSection title font to the
+normal font. The height of the normal title space, the banner at the top of
+the slide, is governed by C<title_height>.
 
 =cut
 
@@ -1341,13 +1350,19 @@ sub grow_toc {
 	my ($self, $n_to_add) = @_;
 	my $toc_widget = $self->{toc_widget};
 	my $toc_width = $self->toc_width;
+	my %font_hash = (
+		name     => $self->font->name,
+		style    => $self->font->style,
+		height   => $self->{toc_font_height},
+		encoding => $self->font->encoding,
+	);
 	for (1..$n_to_add) {
 		# Add the basic container
 		my $toc_label_container = $toc_widget->insert(Widget =>
 			pack => { side => 'top', fill => 'x', },
 			color => $self->{toc_color},
 			backColor => $self->{toc_backColor},
-			height => $self->{toc_height},
+			height => $self->{toc_font_height},
 		);
 		# Create a hash of coderefs that we can later manipulate as
 		# necessary
@@ -1361,18 +1376,15 @@ sub grow_toc {
 				y => 0, relheight => 1,
 				anchor => 'sw',
 			},
-#		push @{$self->{toc_labels}}, $toc_widget->insert(Label =>
 			width => $toc_width,
-			pack => { side => 'top', fill => 'x' },
+			valignment => ta::Middle,
 			pointer => $Prima::PodView::handIcon,
 			color => $self->{toc_color},
 			backColor => $self->{toc_backColor},
-#			autoHeight => 1,
-#			wordWrap => 1,
+			font => \%font_hash,
 			onMouseEnter => sub { $_[0]->font->style(fs::Underlined) },
 			onMouseLeave => sub { $_[0]->font->style(fs::Normal) },
 			onMouseClick => sub { $toc_callbacks{click}->() },
-#			label_container => $toc_label_container,
 		);
 		# Add the coderef hash
 		push @{$self->{toc_callbacks}}, \%toc_callbacks;
