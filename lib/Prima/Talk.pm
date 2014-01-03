@@ -240,7 +240,7 @@ is ignored.
 
 =cut
 
-use Prima qw(Label ImageViewer MsgBox FileDialog);
+use Prima qw(Label MsgBox FileDialog StretchyImage);
 use Prima::PS::Drawable;
 use Prima::Drawable::Subcanvas;
 
@@ -470,41 +470,35 @@ sub init {
 		if exists $profile{title_height};
 	
 	# Load the logo
-	my $logo;
-	if ($profile{logo}) {
-		$logo = $self->{logo} = Prima::Image->load($profile{logo})
-			or carp("Unable to load logo $profile{logo}");
+	my %logo_options = (
+		color => $self->{toc_color},
+		backColor => $self->{toc_backColor},
+		geometry => gt::Place,
+	);
+	if (not exists $profile{logo}) {
+		# do nothing
 	}
+	elsif (ref($profile{logo}) eq 'HASH') {
+		%logo_options = (%logo_options, %{$profile{logo}});
+	}
+	elsif (eval{$profile{logo}->isa('Prima::Image')}) {
+		%logo_options = (%logo_options, image => $profile{logo});
+	}
+	else {
+		%logo_options = (%logo_options, filename => $profile{logo});
+	}
+	$self->{logo} = $aspect_container->insert(StretchyImage => %logo_options);
 	
 	# Calculate the width of the table of contents and the title height,
 	# in pixels
 	my ($toc_width, $title_height) = $self->calculate_decorator_dims;
 	
-	# Add the logo or a blank space
-	my @logo_options = (
-		place => {
-			x => 0, width => $toc_width,
-			rely => 1, y => -$title_height, height => $title_height,
-			anchor => 'sw',
-		},
-		color => $self->{toc_color},
-		backColor => $self->{toc_backColor},
-	);
-	if (defined $logo) {
-		my $zoom = $toc_width / $logo->width;
-		$zoom = $title_height / $logo->height
-				if $title_height / $logo->height < $zoom;
-		$self->{logo_widget} = $aspect_container->insert(ImageViewer =>
-			@logo_options,
-			image => $logo,
-			zoom => $zoom,
-			alignment => ta::Center,
-			valignment => ta::Middle,
-		);
-	}
-	else {
-		$self->{logo_widget} = $aspect_container->insert(Widget => @logo_options);
-	}
+	# Reposition the logo
+	$self->{logo}->set(place => {
+		x => 0, width => $toc_width,
+		rely => 1, y => -$title_height, height => $title_height,
+		anchor => 'sw',
+	});
 	
 	# Add the title label
 	$self->{title_label} = $aspect_container->insert(Label => 
@@ -639,7 +633,7 @@ sub on_size {
 	# Update the layout
 	my ($toc_width, $title_height) = $self->calculate_decorator_dims;
 	# Logo
-	$self->{logo_widget}->place(
+	$self->{logo}->place(
 			x => 0, width => $toc_width,
 			rely => 1, y => -$title_height, height => $title_height,
 			anchor => 'sw',
@@ -803,11 +797,12 @@ sub calculate_decorator_dims {
 	# Moving forward, no more than one of the dims is specified
 	
 	# Easy case: logo but no dims
-	return $self->{logo}->size if $self->{logo}
+	return $self->{logo}->size if $self->{logo}->has_image
 				and not $self->{toc_width} and not $self->{title_height};
 	
-	# No logo is also fairly simple; unspecified dims revert to defaults
-	if (not $self->{logo}) {
+	# No logo image is also fairly simple; unspecified dims revert to
+	# defaults
+	if (not $self->{logo}->has_image) {
 		my $toc_width = $self->{toc_width} || '15%width';
 		my $title_height = $self->{title_height} || '15%height';
 		return (
@@ -816,8 +811,9 @@ sub calculate_decorator_dims {
 		);
 	}
 	
-	# At this point we have a logo and only one of the dimensions. Use the
-	# logo's aspect ratio to compute the size of the other dimension.
+	# At this point we have a logo with an image and only one of the
+	# dimensions. Use the logo's aspect ratio to compute the size of the
+	# other dimension.
 	
 	my $logo_aspect = $self->{logo}->width / $self->{logo}->height;
 	if ($self->{toc_width}) {
@@ -2672,11 +2668,16 @@ sub get_image {
 
 =item image
 
-Renders an image. The argument should either be a scalar string containing
-the filename to render, or it should be a hashref which includes the keys
-C<filename> key. Widget options C<alignment>, C<pack>, C<color> and
-C<backColor> will be applied as well. Note that you cannot set the image
-height or width; that is based on the pixel size of the image.
+Renders an image using L<Prima::StretchyImage>. The argument should either
+be a scalar string containing the filename to render (image files are cached
+by Prima::Talk, so this is decently fast), or it should be a hashref which
+includes keys appropriate for constructing a Prima::StretchyImage. The
+default alignment is the slide's alignment, and the default color and
+backColor are copied from the container widget. The default preserveAspect
+is 1.
+
+You can set the height and width using normal specs, and the image will be
+stretched to fit. Otherwise the image's normal pixel size will be used.
 
 =cut
 
@@ -2687,20 +2688,28 @@ sub render_image {
 	$content = { filename => $content } unless ref($content);
 	my %content = %$content;
 	
-	# Load the image or render a paragraph with the image file name
-	my $filename = delete $content{filename};
-	my $image = $self->get_image($filename)
-		or return $self->render_par({text => $filename, %content}, $container);
+	# Utilize image file caching and render a paragraph with the image file
+	# name if it fails
+	if (exists $content{filename}) {
+		my $filename = delete $content->{filename};
+		$content{image} = $self->get_image($filename)
+			or return $self->render_par({text => $filename, %content}, $container);
+	}
+	
+	# Determine computed heights
+	$content{height} = $self->slide_deck->calculate_size('image height' =>
+		$content->{height}, $container) if exists $content{height};
+	$content{width} = $self->slide_deck->calculate_size('image width' =>
+		$content->{width}, $container) if exists $content{width};
 	
 	# Open the image and set it in the container
-	return $container->insert(ImageViewer =>
+	return $container->insert(StretchyImage =>
 		alignment => $self->alignment,
-		pack => { side => 'top', fill => 'x' },
 		color => $container->color,
 		backColor => $container->backColor,
+		preserveAspect => 1,
 		%content,
-		image => $image,
-		height => $image->height,
+		pack => { side => 'top', fill => 'x' },
 	);
 }
 
