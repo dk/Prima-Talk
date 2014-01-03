@@ -3,6 +3,7 @@ use warnings;
 
 package Prima::StretchyImage;
 use Carp;
+use Scalar::Util qw(looks_like_number refaddr);
 
 our @ISA = qw(Prima::Widget);
 
@@ -18,13 +19,70 @@ sub profile_default {
 	};
 }
 
+sub profile_check_in {
+	my ($self, $p, $default) = @_;
+	
+	# If no image, an invalid image, or they specified both height and width
+	# of the widget, then just use the inherited check_in procedure
+	my $has_valid_image = 0;
+	$has_valid_image = eval{ $p->{image}->isa('Prima::Image') }
+		if exists $p->{image};
+	if (not $has_valid_image or exists $p->{height} and exists $p->{width}) {
+		return $self->SUPER::profile_check_in($p, $default);
+	}
+	
+	my $image = $p->{image};
+	
+	# If we're here, it means that they specified a valid image and are
+	# missing one or both of the height or width.
+	if (not exists $p->{height} and not exists $p->{width}) {
+		# If they have neither, take the image's dimensions:
+		($p->{width}, $p->{height}) = $image->size;
+	}
+	elsif (exists $p->{height}) {
+		# If only height, take either the image's scaled width or plain
+		# width, depending on the value of preserveAspect
+		if ($p->{preserveAspect} and looks_like_number($p->{height})
+			and $p->{height} > 0
+		) {
+			$p->{width} = $image->width * $p->{height} / $image->height;
+		}
+		else {
+			$p->{width} = $image->width;
+		}
+	}
+	else {
+		# If only the width, take either the image's scaled height or plain
+		# height, depending on the value of preserveAspect
+		if ($p->{preserveAspect} and looks_like_number($p->{width})
+			and $p->{width} > 0
+		) {
+			$p->{height} = $image->height * $p->{width} / $image->width;
+		}
+		else {
+			$p->{height} = $image->height;
+		}
+	}
+	
+	# Now that we're finally all set, call the inherited check_in
+	$self->SUPER::profile_check_in($p, $default);
+}
+
+# Add profile checkin (or whatever it's called) such that if there is no
+# height or width, but there is an image, it uses the image's dimensions
+
 sub init {
 	my $self = shift;
 	my %profile = $self->SUPER::init(@_);
 	
+	# Set some default properties so that the forthcoming accessors work
+	# without a hickup.
+	$self->{preserveAspect} = 0;
+	$self->{alignment} = ta::Center;
+	$self->{valignment} = ta::Middle;
 	# Copy the provided properties
-	for my $prop_name ( qw(preserveAspect image alignment valignmnet) ) {
-		$self->{$prop_name} = $profile{$prop_name};
+	for my $prop_name ( qw(preserveAspect image alignment valignment) ) {
+		$self->$prop_name($profile{$prop_name});
 	}
 }
 
@@ -77,10 +135,8 @@ sub on_paint {
 	$canvas->stretch_image($x, $y, $width, $height, $self->image); 
 }
 
-use Scalar::Util qw(looks_like_number refaddr);
-
 sub image {
-	return shift->{image} if @_ == 1;
+	return shift->{image} if @_ == 1 or not defined $_[1];
 	my ($self, $image) = @_;
 	croak("$image is not a Prima image")
 		unless eval { $image->isa('Prima::Image') };
