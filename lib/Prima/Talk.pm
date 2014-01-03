@@ -1834,6 +1834,12 @@ sub animate {
 	)->start;
 }
 
+=head1 CREATING SLIDES
+
+You can create slides either by calling the C<new> method on the desired slide
+class or by supplying the class name to your slide deck's L</add> method.
+
+=cut
 
 package Prima::Talk::Slide;
 use Carp;
@@ -1846,8 +1852,378 @@ sub new {
 	return $self;
 }
 
+sub AUTOLOAD {
+	my $self = shift;
+	my $stash_name = our $AUTOLOAD;
+	$stash_name =~ s/.*:://;
+	# Called as a setter
+	if (@_ == 1) {
+		my $new_value = shift;
+		return $self->{stash}->{$stash_name} = $new_value;
+	}
+	# Called as a getter
+	return $self->{stash}->{$stash_name}
+		if @_ == 0 and exists $self->{stash}->{$stash_name};
+	
+	# Carp if called as a getter, but no value yet
+	if (@_ == 0) {
+		croak("No stashed value for `$stash_name'");
+		return;
+	}
+	
+	# Croak if called with arguments, as this is clearly not what was
+	# meant to happen
+	croak("Unknown slide method `$stash_name'");
+}
+
+=pod
+
+The constructor expects a list of key/value pairs. None of these keys are
+strictly necessary, but some are expected and will issue a warning if you do
+not provide them. The basic keys dictate the appearance of the slide:
+
+=over
+
+=item title
+
+ title => String (expected)
+
+The string to use for the slide's title. This is one of the expected keys that
+will issue a warning if you do not provide one, and the string C<No name> will
+be used as the title if none is supplied. Unless you supply a C<toc> entry,
+this string will also be used for the table of contents listing.
+
+=item content
+
+ content => String | ArrayRefOf[ContentPairs] (expected)
+
+The content should be a paragraph to display or an anonymous I<array> of
+content material. Although the key/value pairs of the content looks a lot
+like an anonymous hash, the content is produced in order, so you must us an
+arrayref. You will get a warning if you accidentally use a hashref.
+
+Here is a simple example of a paragraph, some bullets, and a centered image:
+
+ content => [
+   par => 'You should take certain precautions when feeding
+           a hoard of cats. You should always:',
+   bullets => [
+     'remove catnip from pockets,',
+     'wear thick jeans and leather gloves, and',
+     'quickly step away as soon as the food is down.',
+   ],
+   image => {
+     filename => 'one-hundred-hungry-cats.jpg',
+     alignment => ta::Center,
+   },
+ ],
+
+Most of the L<content types|/Content Types> expect a hashref of
+configuration arguments, but can take a single argument (usually a string)
+and do something intelligent with it.
+
+=item toc
+
+ toc => String
+
+Specifies the string to use in the table of contents listing. This is most
+useful if you want to use a shorter string for the table of contents, or if
+you want your table of contents to convey other information. If you do not
+supply a C<toc> entry, the C<title> will be used, though bear in mind it may
+not quite fit.
+
+=item font_factor
+
+ font_factor => Number
+
+If you want the font sizes for this slide to be slightly smaller or larger
+than default, you can specify a font factor. Values larger than 1 will amplify
+the font size; values smaller than 1 will diminish the font size. Bear in mind
+that in Prima, font sizes are measured in whole numbers of points and Prima
+will round to the nearest font size for your given ratio. In other words, don't
+expect to see any difference between C<< font_factor => 1.4999 >> and
+C<< font_factor => 1.5 >>. This expects positive numbers and will complain if
+you provide a non-number, or a negative number (and default to a factor of 1).
+
+=item alignment
+
+ alignment => ta::Left|ta::Right|ta::Center
+
+Sets the slide's default alignment
+
+=back
+
+Transitions and dynamic behavior are my primary motivation for writing this
+software, and the basic Slide class gives you a few rather general mechanisms
+for specifying intra-slide transitions. The constructor key/value pairs for
+specifying this dynamic behavior include:
+
+=over
+
+=item transitions
+
+ transitions => ArrayRefOf[CodeRef|HashRef]
+
+The simplest sort of intra-slide transitions can be specified by providing
+a collection of coderefs to the C<transitions> key. Whether we came to this
+slide from the previous slide or the next slide (or any other slide), the
+transitions I<always> start from the first one. This behavior differs from
+most other presentation software when going I<backward> through slides, a
+point which I'll clarify in a bit.
+
+For example, suppose that we want to emphasize two different parts of the
+slide in sequence, starting off initially with everything drawn in black,
+then highlighting one of the elements, then highlighting the second and
+unhighlighting the first, and finally unhighlighting the second. A naive set
+of transitions using color changes to achieve the highlighting would look
+like this:
+
+ content => [
+   par => {
+     name => 'foo',
+     text => 'First important thing',
+   }
+   par => {
+     name => 'bar',
+     text => 'Second important thing',
+   }
+ ],
+ transitions => [
+   # no setup, so this is empty
+   sub {},
+   # highlight foo
+   sub {
+     my $slide_obj = shift;
+     $slide_obj->foo->color(cl::LightRed);
+   },
+   # unhilight foo, highlight bar
+   sub {
+     my $slide_obj = shift;
+     $slide_obj->foo->color(cl::Black);
+     $slide_obj->bar->color(cl::LightRed);
+   },
+   # unhilight bar
+   sub {
+     my $slide_obj = shift;
+     $slide_obj->bar->color(cl::Black);
+   }
+ ],
+
+For a real talk, this set of transitions is problematic. It is quite common
+to want to go backwards as well as forwards during a talk, and these
+transitions do not handle backwards transitions gracefully. For example,
+after highighting foo, if we go backwards by pressing the up or left or
+page-up key, the first coderef will be called again, and it does not do
+anything. We need it to un-highlight foo. Similarly, if we advance up to the
+third transition and then go back to the second, the code for the second
+transition will re-highlight foo but not unhighlight bar. A better set of
+transitions would be these:
+
+ content => [
+   par => {
+     name => 'foo',
+     text => 'First important thing',
+   }
+   par => {
+     name => 'bar',
+     text => 'Second important thing',
+   }
+ ],
+ transitions => [
+   sub {   ### Initially all black
+     my ($slide_obj, $dir) = @_;
+     # unhighlight foo on a backwards transition
+     $slide_obj->foo->color(cl::Black) if $dir < 0;
+   },
+   sub {   ### Highlight foo
+     my ($slide_obj, $dir) = @_;
+     # highlight foo
+     $slide_obj->foo->color(cl::LightRed);
+     # unhighlight bar on a backwards transition
+     $slide_obj->bar->color(cl::Black) if $dir < 0;
+   },
+   sub {   ### Highlight bar
+     my ($slide_obj, $dir) = @_;
+     $slide_obj->bar->color(cl::LightRed);
+     # unhighlight foo on a forwards transition
+     $slide_obj->foo->color(cl::Black) if $dir > 0;
+   },
+
+   sub {   ### Go back to all black
+     my ($slide_obj, $dir) = @_;
+     $slide_obj->bar->color(cl::Black);
+   }
+ ],
+
+The above code also shows you the arguments that are passed to each
+transition coderef: the slide object and the direction of the transition. A
+direction of 1 or -1 indicates a forward or backward transition,
+respectively. The first transition coderef may also get a direction of 0,
+which indicates that the slide was just transitioned to from a different
+slide. It also follows logically that the first coderef should never get a
+direction of 1: it should only get a 0 or -1.
+
+You probably noticed that I accessed the paragraphs by invoking the
+paragraph name on the slide object. Any named content is accessible in this
+way, called I<stashing>. You can store arbitrary data in the stash by
+calling your desired stash key as a setter:
+
+ # Set up the data
+ $slide_obj->some_data([1 .. 10]);
+ ...
+ $slide_obj->some_data->[4] = -5;
+
+Be aware that the slide's reference to the stashed values is destroyed upon
+slide tear-down. If you later return to the slide, you will have to
+re-initialize your stash data. If you need your data to persist even after
+you leave the slide, you could store the data in lexical or package
+variables, or consider more robust data caching options.
+
+Notice in the set of transitions give above that we change the color of
+C<foo> to black in both the first and third transitions. A more natural
+approach would be to reset C<foo>'s color upon I<leaving> the second
+transition. You can provide such enter and exit coderefs by specifying a
+hash of coderefs rather than a single transition coderef:
+
+ transitions => [
+   
+   sub { },### No initialization
+   
+   {       ### Highlight foo
+     enter => sub {
+       my $slide_obj = shift;
+       $slide_obj->foo->color(cl::LightRed);
+     },
+     leave => sub {
+       my $slide_obj = shift;
+       $slide_obj->foo->color(cl::Black);
+     }
+   },
+   
+   {       ### Highlight bar
+     enter => sub {
+       shift->bar->color(cl::LightRed);
+     },
+     leave => sub [
+       shift->bar->color(cl::Black);
+     },
+   },
+   
+   sub { },### Final state is all black
+ ],
+
+The coderefs for the C<enter> and C<leave> keys get called with the slide
+object and the transition direction. Two additional keys, C<leave_forwards>
+and C<leave_backwards>, can be used as well, and these are only called with
+the slide object. And finally, empty hashrefs are allowed, so you could just
+as well replace the empty coderefs with empty hashrefs and achieve the same
+end.
+
+I mentioned already that the set of transitions always starts with the first
+transition. You can think of each slide as its own sort of mini-slideshow.
+Each time you land on a slide, it I<starts> the mini-slideshow from the
+beginning. Putting a programmer's perspective on it, a presentation is one
+huge state machine. Slides know how to set up their state from scratch, and
+it is possible to jump around between slides. However, intra-slide
+transitions do I<not> know how to set up their state from scratch: they
+assume that the previous state was created by the transition coderef
+immediately preceding or following. As a corollary, the last coderef in a
+sequence of transitions should never get a direction of -1.
+
+Of course, you may find that you need to jump into the middle of your
+sequence of transitions. In that case, the C<transitions> key is not the
+right tool for the job. You should either (1) revise your talk so that each
+important intermediate state gets its own slide, or (2) use a more dynamic
+slide whose state is specified by either transition clicks or by some form
+of input widget. You can then "jump" to the desired state by entering the
+appropriate input into the input widget. For the latter option, you will
+probably want to use the L</transition> key, which I discuss next.
+
+=item transition
+
+ transition => CodeRef
+
+While the C<transitions> key discussed above lets you specify a
+pre-determined sequence of transitions, the C<transition> key makes no such
+assumptions. This makes it more primitive and yet more powerful: the number
+of transitions and their behavior can be varied dynamically depending on
+whatever sort of input you like.
+
+The coderef you provide to C<transition> gets called just like those under
+C<transitions>: with the slide object and the transition direction.
+
+Unlike the coderefs in the C<transitions> key, the return value of your
+C<transition> coderef is important: a boolean true value means "stay on this
+slide" while a boolean false value means "leave this slide". In the latter
+case, if the transition direction is negative the talk will go to the
+previous slide, and if the transition direction is positive the talk will go
+to the next slide.
+
+XXX discuss how to use this.
+
+=item special_key
+
+ special_key => CodeRef
+
+Some clickers have a special key on them. C<Prima::Talk> pays attention to
+these events and calls the supplied subref whenever they occur. This provides
+a means of invoking dynamic behavior distinct from intra-slide transitions.
+The sole argument to the special key coderef is the slide object.
+
+=item tear_down
+
+ tear_down => CodeRef
+
+It is tempting to put resource cleanup code in your transitions. Given the
+usual way to "leave" a slide (by a forward or backward transition issued in
+response to a page-down or page-up keypress, for example) this would seem
+like a sensible thing to do. However, it is also possible to leave the slide
+by clicking on one of the other slides in the table of contents, or issuing
+a Goto Slide command by pressing the 'g' key. Such an exit can happen in the
+middle of a series of intra-slide transitions.
+
+The simplest way to handle cleanup is to store data in your stash which
+knows how to garbage collect itself. For example, lexical file handles
+automatically close themselves when garbage collected. However, if you need
+to specify particular cleanup code, you should supply a C<tear_down>
+coderef:
+
+ tear_down => sub {
+   my $self = shift;
+   # cleanup code goes here ...
+ },
+
+The tear-down coderef is called before the stash is cleared or the content
+widgets are destroyed.
+
+=item subref content type
+
+Although not strictly an argument to the constructor, one of the supported
+content types is a subref. This content type simply specifies a subroutine
+that should be called during slide rendering. Although you could use subref
+content types to initialize slide state, I recommend using this content type
+primarily for I<rendering visible content>. The exception to this rule
+arises when you need to tweak the slide before any content rendering. For
+example, if a custom content type needs stashed data, or if you need to
+dynamically tweak the slide before rendering the content, a subref
+content type would be appropriate. This and other content types are
+discussed in greater depth below.
+
+=back
+
+XXX Put this somewhere more useful
+
+Furthermore, Prima::Talk::animation provides a convenient mechanism for
+calling a subroutine a fixed number of times in sequence.
+
+=cut
+
 sub init {
 	my $self = shift;
+	
+	# Set up a clean stash
+	$self->{stash} = {};
+	
 	# Make sure we have a name
 	if (not defined $self->{title}) {
 		carp('No title for slide!');
@@ -1875,14 +2251,12 @@ sub init {
 	elsif (ref ($self->{content}) eq ref('')) {
 		$self->{content} = [par => $self->{content}];
 	}
-	
-	# Initialize and empty tear_down_names list
-	$self->{tear_down_names} = [];
 }
 
 sub slide_deck {
 	return $_[0]->{slide_deck} if @_ == 1;
 	my ($self, $deck) = @_;
+	# XXX weaken?
 	$self->{slide_deck} = $deck;
 }
 
@@ -1965,7 +2339,7 @@ sub setup {
 	# working here - add multicolumn support
 	$self->render_content($container, title => $self->title, $self->content);
 	
-	$self->{transition_count} = 0;
+	$self->{stash}->{transition_count} = 0;
 	$self->transition(0);
 }
 
@@ -1978,15 +2352,20 @@ sub render_content {
 	my ($self, $container, @content) = @_;
 	while (@content) {
 		my ($type, $stuff) = (shift @content, shift @content);
+		my $rendered_content;
 		if ($self->{"render_$type"}) {
-			$self->{"render_$type"}->($self, $stuff, $container);
+			$rendered_content = $self->{"render_$type"}->($self, $stuff, $container);
 		}
 		elsif (my $subref = $self->can("render_$type")) {
-			$subref->($self, $stuff, $container);
+			$rendered_content = $subref->($self, $stuff, $container);
 		}
 		else {
 			carp("Unknown content type $type; defaulting to paragraph rendering");
-			$self->render_par($stuff, $container);
+			$rendered_content = $self->render_par($stuff, $container);
+		}
+		# Stash named content
+		if(ref($stuff) eq 'HASH' and exists $stuff->{name}) {
+			$self->{stash}->{$stuff->{name}} = $rendered_content;
 		}
 	}
 }
@@ -2000,33 +2379,7 @@ sub render_title {
 	$self->slide_deck->set_title($title);
 }
 
-# Combine this method with the next one some day.
-sub store_object_under_name {
-	my ($self, $name, $object) = @_;
-	return unless $name;
-	croak("Already have content named [$name]")
-		if exists $self->{$name};
-	# Store the object under the given name
-	$self->{$name} = $object;
-	
-	# We need to clear out all the names at tear-down so that if we
-	# transition back to this slide, we have a clean slate. So, we track all
-	# the names here:
-	push @{$self->{tear_down_names}}, $name;
-}
-
-sub stash {
-	croak("stash is a method that expects one or two arguments")
-		unless @_ == 2 or @_ == 3;
-	my $self = shift;
-	my $key = shift;
-	# Called as a getter
-	return $self->{stash}->{$key} if @_ == 0;
-	# called as a setter
-	$self->{stash}->{$key} = $_[0];
-}
-
-=head2 Content rendering
+=head1 Content rendering
 
 Rendering basic content on your slides is pretty easy, and Prima::Talk::Slide
 provides a number of mechanisms for adding new rendering commands. For
@@ -2143,7 +2496,7 @@ sub render_container {
 	my $width = $self->slide_deck->calculate_size(container_width =>
 		$content->{width} || '99%colwidth', $parent_container
 	);
-	my $new_container = $parent_container->insert(Widget =>
+	return $parent_container->insert(Widget =>
 		color => $parent_container->color,
 		backColor => $parent_container->backColor,
 		pack => { side => 'top', fill => 'x' },
@@ -2151,9 +2504,6 @@ sub render_container {
 		height => $height,
 		width => $width,
 	);
-	
-	$self->store_object_under_name($content->{name}, $new_container);
-	return $new_container;
 }
 
 =item par
@@ -2202,7 +2552,6 @@ sub render_par {
 	);
 	$label->font->size($self->font_size * $font_factor);
 	$label->font->name($font_name);
-	$self->store_object_under_name($params{name}, $label);
 	return $label;
 }
 
@@ -2300,8 +2649,7 @@ sub render_tex {
 			1;
 		} or do {
 			carp("Unable to render latex");
-			$self->render_par($content, $container);
-			return;
+			return $self->render_par($content, $container);
 		}
 	}
 	
@@ -2325,10 +2673,10 @@ sub get_image {
 =item image
 
 Renders an image. The argument should either be a scalar string containing
-the filename to render, or it should be a hashref which can include keys
-C<filename>, and C<name>, as well as widget options C<alignment>, C<pack>,
-C<color> and C<backColor>. Note that you cannot set the image height or
-width; that is based on the pixel size of the image.
+the filename to render, or it should be a hashref which includes the keys
+C<filename> key. Widget options C<alignment>, C<pack>, C<color> and
+C<backColor> will be applied as well. Note that you cannot set the image
+height or width; that is based on the pixel size of the image.
 
 =cut
 
@@ -2345,7 +2693,7 @@ sub render_image {
 		or return $self->render_par({text => $filename, %content}, $container);
 	
 	# Open the image and set it in the container
-	my $image_viewer = $container->insert(ImageViewer =>
+	return $container->insert(ImageViewer =>
 		alignment => $self->alignment,
 		pack => { side => 'top', fill => 'x' },
 		color => $container->color,
@@ -2354,8 +2702,6 @@ sub render_image {
 		image => $image,
 		height => $image->height,
 	);
-	$self->store_object_under_name($content->{name} => $image_viewer);
-	return $image_viewer;
 }
 
 =item plot
@@ -2383,10 +2729,6 @@ sub render_plot {
 		width => $width,
 	);
 	$plot->font->size($self->font_size);
-	
-	# add the plot to the slide under the provided name
-	$self->store_object_under_name($content->{name} => $plot);
-	
 	return $plot;
 }
 
@@ -2396,6 +2738,10 @@ The two column rendering type expects a hashref with options. Keys to set
 the dimensions of the columns include C<left_width>, C<right_width>, and
 C<height>. Keys that specify the content for each column are C<left> and
 C<right>, which should correspond to hashrefs.
+
+Unlike most other content types, two_column will actually croak if you
+do not provide a hashref. There is simply no way for it to do anything
+sensible with a scalar input.
 
 =cut
 
@@ -2430,6 +2776,9 @@ sub render_two_column {
 		color => $container->color,
 		backColor => $container->backColor,
 	);
+	if ($content->{left_name}) {
+		$self->{stash}->{$content->{left_name}} = $left_column;
+	}
 	my @content;
 	if ($content->{left}) {
 		if (ref($content->{left}) eq ref([])) {
@@ -2456,6 +2805,9 @@ sub render_two_column {
 		color => $container->color,
 		backColor => $container->backColor,
 	);
+	if ($content->{left_name}) {
+		$self->{stash}->{$content->{left_name}} = $left_column;
+	}
 	if ($content->{right}) {
 		if (ref($content->{right}) eq ref([])) {
 			@content = @{$content->{right}};
@@ -2471,9 +2823,7 @@ sub render_two_column {
 	}
 	$self->render_content($right_column, @content);
 	
-	# Store the columns
-	$self->store_object_under_name($content->{left_name}, $left_column);
-	$self->store_object_under_name($content->{right_name}, $right_column);
+	return $two_container;
 }
 
 =item spacer
@@ -2481,17 +2831,23 @@ sub render_two_column {
 =cut
 
 sub render_spacer {
-	my ($self, $height, $container) = @_;
+	my ($self, $content, $container) = @_;
 	
-	$height = $self->slide_deck->calculate_size( spacer_height =>
-		$height, $container
+	# One-argument form specifies the height
+	$content = { height => $content } unless ref($content);
+	
+	my %content = %$content;
+	
+	my $height = $self->slide_deck->calculate_size( spacer_height =>
+		$content{height}, $container
 	);
 	
-	$container->insert(Widget =>
+	return $container->insert(Widget =>
 		pack => { side => 'top', fill => 'x' },
 		height => $height,
 		color => $container->color,
 		backColor => $container->backColor,
+		%content,
 	);
 }
 
@@ -2565,6 +2921,8 @@ sub render_bullets {
 sub transition {
 	my ($self, $direction) = @_;
 	
+	$self->{stash}{transition_count} += $direction;
+	
 	# Act based on the keys supplied
 	if ($self->{transition}) {
 		return $self->{transition}->($self, $direction);
@@ -2572,13 +2930,13 @@ sub transition {
 	elsif ($self->{transitions}) {
 		# Get the list of transitions and the current transition count
 		my @transitions = @{$self->{transitions}};
-		my $counter = $self->{transition_count} + $direction;
+		my $counter = $self->{stash}{transition_count};
 		
-		# Can't transition to something outside the list!
-		return 0 if $counter < 0 or $counter > $#transitions;
-		
-		# If the current transition has a leave callback, call it
-		if (ref($transitions[$counter - $direction]) eq 'HASH') {
+		# If we are in the middle of a set of transitions and the current
+		# transition has a leave callback, call it
+		if ($direction != 0
+			and ref($transitions[$counter - $direction]) eq 'HASH'
+		) {
 			my %trans_table = %{$transitions[$counter - $direction]};
 			if ($direction == -1 and exists $trans_table{leave_backwards}) {
 				$trans_table{leave_backwards}->($self);
@@ -2586,17 +2944,17 @@ sub transition {
 			elsif ($direction == 1 and exists $trans_table{leave_forwards}) {
 				$trans_table{leave_forwards}->($self);
 			}
+			$trans_table{leave}->($self, $direction)
+				if exists $trans_table{leave};
 		}
 		
-		# Update the transition counter
-		$self->{transition_count} = $counter;
+		# We're done if trying to transition to something outside the list
+		return 0 if $counter < 0 or $counter > $#transitions;
 		
 		# Call the transition.
 		if (ref($transitions[$counter]) eq 'HASH') {
-			my %trans_table = %{$transitions[$counter]};
-			exists $trans_table{enter} or croak('Transition table for '
-				. "$counter transition does not have an enter sub");
-			$trans_table{enter}->($self, $direction);
+			$transitions[$counter]{enter}->($self, $direction)
+				if exists $transitions[$counter]{enter};
 		}
 		else {
 			$transitions[$counter]->($self, $direction);
@@ -2611,18 +2969,16 @@ sub transition {
 sub tear_down {
 	my $self = shift;
 	
-	# Really basic - just remove widgets
-	$_->destroy foreach (reverse $self->slide_deck->container->get_components);
-	
 	# Call the supplied tear-down method
 	$self->{tear_down}->($self)
 		if exists $self->{tear_down}
 		and ref($self->{tear_down}) eq ref( sub{} );
 	
-	# Remove all the named keys
-	while (my $name = pop @{$self->{tear_down_names}}) {
-		delete $self->{$name};
-	}
+	# Clear the stash
+	$self->{stash} = {};
+	
+	# Finish by removing the widgets
+	$_->destroy foreach (reverse $self->slide_deck->container->get_components);
 }
 
 package Prima::Talk::WideSlide;
@@ -2687,6 +3043,7 @@ sub render_title {
 		wordWrap => 1,
 	);
 	$title_label->font->size($self->title_font_size);
+	return $title_label;
 }
 
 package Prima::Talk::Emphasize;
