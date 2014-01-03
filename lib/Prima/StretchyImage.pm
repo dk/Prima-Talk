@@ -23,9 +23,12 @@ sub profile_default {
 sub profile_check_in {
 	my ($self, $p, $default) = @_;
 	
-	$p->{image} = Prima::Image->load($p->{filename})
-		or croak("Unable to load image with name $p->{filename}");
-	delete $p->{filename};
+	# Set the image based on any supplied filename
+	if (exists $p->{filename}) {
+		$p->{image} = Prima::Image->load($p->{filename})
+			or croak("Unable to load image with name $p->{filename}");
+		delete $p->{filename};
+	}
 	
 	# If no image, an invalid image, or they specified both height and width
 	# of the widget, then just use the inherited check_in procedure
