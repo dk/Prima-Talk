@@ -1857,9 +1857,14 @@ sub init {
 	$self->{toc_entry} = $self->{toc} if exists $self->{toc};
 	$self->{toc_entry} = $self->{title} unless exists $self->{toc_entry};
 	
-	# Make sure we have a font size factor
+	# Make sure we have a good font size factor
 	$self->{font_factor} ||= 1;
-	
+	if (not Scalar::Util::looks_like_number($self->{font_factor})
+		or $self->{font_factor} <= 0
+	) {
+		carp('Ignoring non-numeric or negative font_factor');
+		$self->{font_factor} = 1;
+	}
 
 	# gripe if they don't have content
 	if (not defined $self->{content}) {
