@@ -140,6 +140,8 @@ sub on_paint {
 	$canvas->stretch_image($x, $y, $width, $height, $self->image); 
 }
 
+sub has_image { return defined shift->{image} }
+
 sub image {
 	return shift->{image} if @_ == 1 or not defined $_[1];
 	my ($self, $image) = @_;
@@ -230,6 +232,9 @@ Prima::StretchyImage - a widget for displaying an image within a given space
  $s_im->image($new_image);
  if ($s_im->preserveAspect) {
      print "Won't fill the full space\n";
+ }
+ if ($s_im->has_image) {
+     # do something special...
  }
 
 =head1 WORKING EXAMPLE
