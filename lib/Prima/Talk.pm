@@ -434,6 +434,17 @@ sub init {
 		$self->{$prop_name} = $profile{$prop_name};
 	}
 	
+	# Copy custom size spec methods
+	for my $key (keys %profile) {
+		next unless $key =~ /^size_spec_.+$/;
+		if (ref{$profile{$key}} eq 'CODE') {
+			$self->{$key} = $profile{$key};
+		}
+		else {
+			carp("key `$key' looks like it should be a size spec, but does not refer to a coderef");
+		}
+	}
+	
 	# Build the aspect-preserving container, which holds everything else.
 	# This must be the first thing to be built since some of the relative
 	# size specs depend on its existence.
@@ -703,13 +714,93 @@ vocabulary of sizes than was available with the standard Prima size specs.
 Generaly, everything in Prima is about pixels, with relative sizes (i.e.
 L<relwidth|/Prima::Widget::place/relwidth>) and foint sizes in
 
+The following suffixes are available:
 
-XXXXXXXXXXXXXXXXXX
+=over
 
-working here - document different size specs; consider allowing special
-specs that can be added as the user sees fit, just like special rendering
-and special footer field extensions
+=item px
 
+A size in pixels. This is also what you get when you have no suffix at all.
+Thus a spec of '5px' will return simply 5.
+
+=item em
+
+A multiple of the width of the letter M. The letter width is based on the
+slide's default font properties. For example, if in your current font the
+letter M is 20 pixels wide, the speck '3.2em' would return 64.
+
+=item %height
+
+A percentage of the full talk's height. If your talk widget is 800 pixels
+tall, then '10%height' will be 80 pixels.
+
+=item %colheight
+
+A percentage of the current container widget's height. This is often a
+useful metric when specifying the height of an image or plot. If your
+container widget is 600 pixels tall, '50%colheight' will be 300 pixels.
+
+=item %colheightleft
+
+A percentage of the remaining free height in the current container widget.
+This only works as long as the content renderers that you use pack their
+contents into the container. If you have a container that is 600 pixels
+tall and a paragaph consumes 112 pixels, then '30%colheightleft' will give
+you 176.4, which is truncated to 176.
+
+=item %width
+
+A percentage of the full talk's width. If you talk widget is 1000 pixels
+wide, then '50%width' will return 500.
+
+=item %colwidth
+
+A percentage of the width of the current container widget. Given that most
+content packs down from the top, you will usually only use this for the
+L</two_column> renderable.
+
+=back
+
+You can also supply your own suffixes. If you are trying a new size spec in
+an experimental talk, you can simply provide a coderef to the talk widget
+itself. For example, you could provide a multiple of the titlebar's height
+with something like this in your constructor:
+
+ my $talk = $window->insert(Talk =>
+   ... normal args ...
+   size_spec_titlebar => sub {
+     my ($self, $name, $size, $container) = @_;
+     my ($undef, $title_height) = $self->calculate_decorator_dims;
+     # Note $size has already been stripped of its suffix and
+     # is just a number
+     return $size * $title_height;
+   }
+   ...
+ );
+
+Then you can use "2titlebar" to indicate a size that is twice the titlebar's
+height.
+
+A more permanent mechanism for creating new specs is available through
+monkey-patching, or by creating derived classes. Simply provide a method
+with the same special name:
+
+ # monkey-patch:
+ sub Prima::Talk::size_spec_titlebar {
+   ...
+ }
+ 
+ # Derived class:
+ 
+ package Prima::FancyTalk;
+ our @ISA = ('Prima::Talk');
+ sub size_spec_titlebar {
+   ...
+ }
+
+Note that per-widget callback override custom size spec implementations.
+That is, if you specify C<size_spec_titlebar> both as a class method and as
+a coderef to the constructor, the consructor coderef will take precedence.
 
 =cut
 
@@ -738,15 +829,31 @@ sub calculate_size {
 	# Percent of the column height or width
 	return $size * $container->height / 100 if $size =~ s/\%colheight$//;
 	return $size * $container->width / 100  if $size =~ s/\%colwidth$//;
+	# Percent of the remaining column height
+	if ($size =~ s/\%colheightleft//) {
+		my $top = $container->height;
+		my $bottom = 0;
+		for my $widget ($container->packSlaves) {
+			next if (($widget->name || '') eq 'container_padding');
+			my $pack_opts = $widget->packInfo;
+			if ($$pack_opts{side} eq 'top') {
+				$top = $widget->bottom if $widget->bottom < $top;
+			}
+			elsif ($$pack_opts{side} eq 'bottom') {
+				$bottom = $widget->top if $widget->top > $bottom;
+			}
+		}
+		return $size * ($top - $bottom) / 100;
+	}
 	
 	# Handle special suffixes
 	if ($size =~ /\d*(?:\.\d*)?(.+)/) {
 		my $suffix = $1;
-		if (my $subref = $self->can("size_spec_$suffix")) {
-			$subref->($self, $name, $size, $container);
-		}
-		elsif (exists $self->{"size_spec_$suffix"}) {
+		if (exists $self->{"size_spec_$suffix"}) {
 			$self->{"size_spec_$suffix"}->($self, $name, $size, $container);
+		}
+		elsif (my $subref = $self->can("size_spec_$suffix")) {
+			$subref->($self, $name, $size, $container);
 		}
 	}
 	
@@ -2329,6 +2436,7 @@ sub setup {
 		pack => { side => 'left', fill => 'y' },
 		color => $container->color,
 		backColor => $container->backColor,
+		name => 'container_padding',
 	);
 	
 	# Render the content
