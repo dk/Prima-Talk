@@ -1970,7 +1970,7 @@ sub AUTOLOAD {
 	
 	# Carp if called as a getter, but no value yet
 	if (@_ == 0) {
-		croak("No stashed value for `$stash_name'");
+		carp("No stashed value for `$stash_name'");
 		return;
 	}
 	
