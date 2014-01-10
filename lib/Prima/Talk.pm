@@ -1998,12 +1998,13 @@ this string will also be used for the table of contents listing.
 
 =item content
 
- content => String | ArrayRefOf[ContentPairs] (expected)
+ content => String | CodeRef | ArrayRefOf[ContentPairs] (expected)
 
-The content should be a paragraph to display or an anonymous I<array> of
-content material. Although the key/value pairs of the content looks a lot
-like an anonymous hash, the content is produced in order, so you must us an
-arrayref. You will get a warning if you accidentally use a hashref.
+The content should be a paragraph to display, a coderef to execute, or an
+anonymous I<array> of content material. Although the key/value pairs of the
+array form of content looks a lot like an anonymous hash, the content is
+produced in order, so you must us an arrayref. You will get a warning if you
+accidentally use a hashref.
 
 Here is a simple example of a paragraph, some bullets, and a centered image:
 
@@ -2020,6 +2021,56 @@ Here is a simple example of a paragraph, some bullets, and a centered image:
      alignment => ta::Center,
    },
  ],
+
+The equivalent coderef form looks like this:
+
+ content => sub {
+   my ($slide, $container) = @_;
+   $slide->render_par('You should take certain precautions
+     when feeding a hoard of cats. You should always:',
+     $container);
+   $slide->render_bullets([
+     'remove catnip from pockets,',
+     'wear thick jeans and leather gloves, and',
+     'quickly step away as soon as the food is down.',
+     ], $container);
+   $slide->render_image({
+     filename => 'one-hundred-hungry-cats.jpg',
+     alignment => ta::Center,
+   }, $conainer);
+ },
+
+The coderef form is more verbose, and therefore more tedious for static
+material. However, it also gives you a simple way to determine the material
+dynamically in ways that the data structure in the first for does not. Of
+course, Prima::Talk lets you mix and match the two forms as necessary. One
+suitable L<content type|/Content Types> that you could include in the array
+of content is a L<subref> type, which will be executed during slide
+rendering. Conversely, one method that slides support is L<render_content>.
+In the arrayref content specification, you would specify code to be executed
+as
+
+ content => [
+   par => 'a paragraph...',
+   subref => sub {
+     my ($slide, $container) = @_;
+     ... code to be exectued ... 
+   },
+   par => 'more static content...', 
+ ],
+
+When using the coderef specification, you could incorporate a nested data
+structure as
+
+ content => sub {
+   my ($slide, $container) = @_;
+   $slide->render_content($container,
+     par => 'static-content formatting...',
+     bullets => [get_bullets_text()],
+     par => 'more static content...',
+   );
+   # more dynamic code can go here... 
+ },
 
 Most of the L<content types|/Content Types> expect a hashref of
 configuration arguments, but can take a single argument (usually a string)
@@ -2057,9 +2108,10 @@ Sets the slide's default alignment
 =back
 
 Transitions and dynamic behavior are my primary motivation for writing this
-software, and the basic Slide class gives you a few rather general mechanisms
-for specifying intra-slide transitions. The constructor key/value pairs for
-specifying this dynamic behavior include:
+software. In addition to letting you generate the slide content through
+blocks of code, the basic Slide class gives you a few rather general
+mechanisms for specifying intra-slide transitions. The constructor key/value
+pairs for specifying this dynamic behavior include:
 
 =over
 
@@ -2353,6 +2405,10 @@ sub init {
 	# If they supplied a single text string, interpret it as a paragraph
 	elsif (ref ($self->{content}) eq ref('')) {
 		$self->{content} = [par => $self->{content}];
+	}
+	# If they supplied a single subref, set it up to be run
+	elsif (ref ($self->{content}) eq ref(sub{})) {
+		$self->{content} = [subref => $self->{content}];
 	}
 }
 
