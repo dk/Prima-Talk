@@ -2916,6 +2916,38 @@ Unlike most other content types, two_column will actually croak if you
 do not provide a hashref. There is simply no way for it to do anything
 sensible with a scalar input.
 
+When called as a function (C<render_two_column>), this renderable differs
+from most others by returning different things in different contexts. This
+renderable actally builds an outer container into which it packs the two
+columns, and in scalar context returns that outer container. In list
+context, however, it returns the left and right containers. As such, these
+two blocks of code achieve nearly the same end:
+
+ # option one:
+ my ($left_col, $right_col)
+   = $slide->render_two_column({
+     left_width  => '40%colwidth',
+     right_width => '55%colwidth',
+   }, $container);
+ # Now carry on with $left_col and $right_col ...
+ 
+ # option two:
+ $slide->render_two_column({
+   left_width  => '40%colwidth',
+   left_name   => 'dates',
+   right_width => '55%colwidth',
+   right_name  => 'times',
+ }, $container);
+ # Now carry on with $slide->dates and $slide->times ...
+
+Although the upper example is less verbose, the containers declared in the
+second example can be accessed by name as slide methods in later code. For
+example, if you anticipate updating the contents of a column in one or more
+slide transitions, it is probably best to name your columns. If you simply
+need to dynamically construct the columns in a coderef, then getting the
+two containers as the return values from the rendering method is probably
+easier.
+
 =cut
 
 sub render_two_column {
@@ -2996,7 +3028,11 @@ sub render_two_column {
 	}
 	$self->render_content($right_column, @content);
 	
-	return $two_container;
+	# Return either the main container or both columns, depending on the
+	# calling context.
+	return unless defined wantarray;
+	return $two_container unless wantarray;
+	return ($left_column, $right_column);
 }
 
 =item spacer
