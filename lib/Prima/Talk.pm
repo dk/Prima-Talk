@@ -434,6 +434,16 @@ sub init {
 		$self->{$prop_name} = $profile{$prop_name};
 	}
 	
+	# Copy the notes window, if supplied
+	if (exists $profile{notes_window} ) {
+		if (eval { $profile{notes_window}->isa('Prima::Widget') }) {
+			$self->{notes_window} = $profile{notes_window};
+		}
+		else {
+			croak('notes_window is not a Prima::Widget');
+		}
+	}
+	
 	# Copy custom size spec methods
 	for my $key (keys %profile) {
 		next unless $key =~ /^size_spec_.+$/;
@@ -1904,6 +1914,21 @@ sub set_title {
 	$self->{title_label}->text($title);
 }
 
+=head2 notes_window
+
+Returns the container window that represents the notes window. If no notes
+window was defined when the talk was created, this returns the undefined
+value.
+
+This is used primarily during slide setup and tear down to render any
+notes elements.
+
+=cut
+
+sub notes_window {
+	return $_[0]->{notes_window};
+}
+
 =head2 animate
 
 Kicks off an animation sequence. Takes the number of frames, the timeout
@@ -2075,6 +2100,18 @@ structure as
 Most of the L<content types|/Content Types> expect a hashref of
 configuration arguments, but can take a single argument (usually a string)
 and do something intelligent with it.
+
+=item notes
+
+ notes => String | CodeRef | ArrayRefOf[ContentPairs]
+
+If you declared a C<notes_window> when you built your slide deck, the
+content you specify with your notes will be rendered in your notes window.
+You can interact with named content in transitions, just as with your
+normal content. This is most useful in a two-monitor setup, in which case
+you can position your talk's window on the "second" screen and your notes
+window on the first screen. Although called "notes", any content is allowed,
+including interactive elements that you may wish to hide from your audience.
 
 =item toc
 
@@ -2498,6 +2535,10 @@ sub setup {
 	# Render the content
 	# working here - add multicolumn support
 	$self->render_content($container, title => $self->title, $self->content);
+	
+	# Render notes, if applicable
+	$self->render_content($self->slide_deck->notes_window, @{$self->{notes}})
+		if Prima::Object::alive($self->slide_deck->notes_window);
 	
 	$self->{stash}->{transition_count} = 0;
 	$self->transition(0);
@@ -3182,6 +3223,11 @@ sub tear_down {
 	$self->{tear_down}->($self)
 		if exists $self->{tear_down}
 		and ref($self->{tear_down}) eq ref( sub{} );
+	
+	if (Prima::Object::alive($self->slide_deck->notes_window)) {
+		$_->destroy
+			foreach (reverse $self->slide_deck->notes_window->get_components)
+	}
 	
 	# Clear the stash
 	$self->{stash} = {};
