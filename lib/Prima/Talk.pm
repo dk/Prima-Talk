@@ -2844,7 +2844,7 @@ sub render_tex {
 			system('dvips', '-E', '_tmp.dvi');
 			return unless -f '_tmp.ps';
 			unlink '_tmp.dvi';
-			system('convert', '-density', '200', '_tmp.ps', '-flatten', $cache_name);
+			system('convert', '-density', '1600', '_tmp.ps', '-flatten', $cache_name);
 			return unless -f $cache_name;
 			unlink '_tmp.ps';
 			1;
