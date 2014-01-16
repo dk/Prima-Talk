@@ -2549,6 +2549,54 @@ sub special_key {
 	$self->{special_key}->($self) if exists $self->{special_key};
 }
 
+=head2 prepare_font_hash
+
+ $content{font} = $slide->prepare_font_hash($content{font}, $container);
+
+Given a hashref with extended font specifications, prepares a font hashref
+merged with the parent container's font specification. Note that this method
+gracefully handles an undefined input font hash, so you need not check if
+C<$content{font}> exists before calling this method. (However, you need to
+ensure that the container is a Prima widget. We can only be so graceful
+here.)
+
+The extended font specification mostly focuses on size. Normally font sizes
+must be in pixels, but here you can specify a multiple of the parent
+container's font size with the C<x> suffix, such as C<1.2x>. You can also
+use the normal size specifications for container dimensions discussed under
+L</calculate_size>. Note the C<em> widths are relative to the slide-deck's
+standard em-width, not the container's em-width.
+
+=cut
+
+sub prepare_font_hash {
+	my ($self, $hashref, $container) = @_;
+	return $container->font if not defined $hashref;
+	
+	my %font = %$hashref;
+	# Account for relative sizes.
+	if ($font{size}) {
+		if ($font{size} =~ s/x$//) {
+			$font{size} = $container->font->size * $font{size};
+		}
+		elsif ($font{size} =~ /[^\d.]/) {
+			$font{size} = $self->slide_deck->calculate_size('font_size',
+				$font{size}, $container);
+		}
+	}
+	if ($font{height}) {
+		if ($font{height} =~ s/x$//) {
+			$font{height} = $container->font->height * $font{height};
+		}
+		elsif ($font{height} =~ /[^\d.]/) {
+			$font{height} = $self->slide_deck->calculate_size('font_height',
+				$font{height}, $container);
+		}
+	}
+	return $container->font_match(\%font, $container->font, 1);
+}
+
+
 sub render_content {
 	my ($self, $container, @content) = @_;
 	while (@content) {
@@ -2573,6 +2621,16 @@ sub render_content {
 
 sub alignment {
 	return $_[0]->{alignment} || ta::Left;
+}
+
+sub get_alignment_for {
+	my ($self, $widget) = @_;
+	# First, does the widget have the algnment property?
+	return $widget->alignment if eval{$widget->can('alignment')};
+	# OK, does it have an alignment property?
+	return $widget->{alignment} if exists $widget->{alignment};
+	# OK, return *our* alignment if all else fails
+	return $self->alignment;
 }
 
 sub render_title {
@@ -2664,23 +2722,29 @@ own:
 =item container
 
 The most generic content type is simply an empty container widget. A
-container takes a hashref of arguments with keys that can include a height,
-a width, and a name:
+container takes a hashref of arguments with keys that can include height,
+width, color, backColor, alignment, name, font, and all normal L<Prima::Widget>
+properties:
 
    ...
    content => [
      ...
      container => {
        height => '10%colheight', name => 'upper_container',
+       font => { style => fs::Bold }, alignment => ta::Right,
      },
      ...
    ],
    ...
 
-Containers are mostly useful when they are given a name, thus letting you
-access them and change their contents during transitions. If you simply need
-a spacer, use the L<spacer|/spacer> content type, which is even simpler than
-the container.
+Containers do not provide any shorthand for rendering content inside them.
+However, if you provide a name, you can easily access a container during
+rendering callbacks or in transitions, adding or removing content. The font,
+alignment, and other properties are used as the defaults for any child
+content.
+
+If you simply need a spacer, use the L<spacer|/spacer> content type, which
+is even simpler than the container.
 
 =cut
 
@@ -2697,14 +2761,18 @@ sub render_container {
 	my $width = $self->slide_deck->calculate_size(container_width =>
 		$content->{width} || '99%colwidth', $parent_container
 	);
-	return $parent_container->insert(Widget =>
+	my $font = $self->prepare_font_hash($content->{font}, $parent_container);
+	my $to_return = $parent_container->insert(Widget =>
 		color => $parent_container->color,
 		backColor => $parent_container->backColor,
 		pack => { side => 'top', fill => 'x' },
 		%$content,
+		font => $font,
 		height => $height,
 		width => $width,
 	);
+	$to_return->{alignment} = $self->get_alignment_for($content->{alignment});
+	return $to_return;
 }
 
 =item par
@@ -2712,8 +2780,8 @@ sub render_container {
 Renders a paragraph of text. The content renderer expects either a string
 of text to render or a hashref of options which include C<text>, C<color>,
 C<backColor>, C<alignment>, C<autoHeight>, C<wordWrap>, C<pack>, C<name>, 
-C<font_name>, and C<font_factor>. Unless explicitly specified, the alignment
-uses the parent's alignment.
+and C<font>. Unless explicitly specified, the alignment uses the parent's
+alignment.
 
 =cut
 
@@ -2733,9 +2801,12 @@ sub render_par {
 		return;
 	}
 	
-	# Get font stuff
-	my $font_factor = delete $params{font_factor} || 1;
-	my $font_name = delete $params{font_name} || $container->font->{name};
+	# Die on deprecated font_factor behavior
+	confess("par font_factor was removed; specify font => { size => '$params{font_factor}x' } instead\n")
+		if exists $params{font_factor};
+	
+	# Merge the font hash
+	$params{font} = $self->prepare_font_hash($params{font}, $container);
 	
 	# Clean out extra whitespace
 	$params{text} =~ s/\s+/ /g;
@@ -2749,10 +2820,9 @@ sub render_par {
 		autoHeight => 1,
 		pack => { side => 'top', fill => 'x' },
 		wordWrap => 1,
+		alignment => $self->get_alignment_for($container),
 		%params,
 	);
-	$label->font->size($self->font_size * $font_factor);
-	$label->font->name($font_name);
 	return $label;
 }
 
@@ -2909,7 +2979,7 @@ sub render_image {
 	
 	# Open the image and set it in the container
 	return $container->insert(StretchyImage =>
-		alignment => $self->alignment,
+		alignment => $self->get_alignment_for($container),
 		color => $container->color,
 		backColor => $container->backColor,
 		preserveAspect => 1,
@@ -2939,10 +3009,10 @@ sub render_plot {
 		backColor => $container->backColor,
 		pack => { side => 'top' },
 		%$content,
+		font => $self->prepare_font_hash($content->{font}, $container),
 		height => $height,
 		width => $width,
 	);
-	$plot->font->size($self->font_size);
 	return $plot;
 }
 
@@ -2991,6 +3061,10 @@ easier.
 
 =cut
 
+# XXX work on better general container property handling
+# Let a user specify left_props => { width => ..., name => ..., etc }
+# instead of the left_width, left_name, etc
+# Then render using the container rendering.
 sub render_two_column {
 	my ($self, $content, $container) = @_;
 	croak("two_column expects a hashref")
@@ -3078,6 +3152,11 @@ sub render_two_column {
 
 =item spacer
 
+Accepts a height, or a hashref that can specify color and backColor, among
+other properties. You can name spacers, which can be useful if you need to
+animate the height of a spacer, for example. However, rendering content
+inside spacers is generally discouraged. Use a general container for that.
+
 =cut
 
 sub render_spacer {
@@ -3122,18 +3201,30 @@ sub render_subref {
 use charnames ':full';
 my $bullet = "\N{BULLET}";
 sub render_bullets {
-	my ($self, $bullets, $container) = @_;
+	my ($self, $content, $container) = @_;
+	
+	$content = { bullets => $content } if ref($content) eq ref([]);
+	my %content = (
+		color => $container->color,
+		backColor => $container->backColor,
+		%$content
+	);
+	# No pack/place allowed
+	delete $content{pack};
+	delete $content{place};
 	
 	# Add a small spacer
 	$self->render_spacer('0.5em', $container);
 	my $height = $container->font->height;
 	
+	# Determine the font
+	$content{font} = $self->prepare_font_hash($content{font}, $container);
+	
 	# For each bullet, pack the bullet then the paragraph
-	for my $bullet_text (@$bullets) {
+	for my $bullet_text (@{$content{bullets}}) {
 		my $bullet_container = $container->insert(Widget =>
 			pack => { side => 'top', fill => 'x' },
-			color => $container->color,
-			backColor => $container->backColor,
+			%content,
 		);
 		# Insert a phantom bullet to make the packer happy, but actually
 		# use "place" to render the bullet where we want it
@@ -3147,13 +3238,12 @@ sub render_bullets {
 				x => 8, width => $shadow_bullet->width, anchor => 'sw',
 				rely => 1, y => -$height, height => $height,
 			},
-			color => $container->color,
-			backColor => $container->backColor,
+			%content,
 			text => $bullet,
 			alignment => ta::Center,
 		);
-		$bullet->font->size($self->font_size);
 		$self->render_par({
+			%content,
 			text => $bullet_text,
 			# XXX This needs to be handled better
 			alignment => ta::Left,
