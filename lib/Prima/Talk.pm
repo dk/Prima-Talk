@@ -240,7 +240,7 @@ is ignored.
 
 =cut
 
-use Prima qw(Label MsgBox FileDialog StretchyImage);
+use Prima qw(Label MsgBox FileDialog StretchyImage InputLine);
 use Prima::PS::Drawable;
 use Prima::Drawable::Subcanvas;
 
@@ -3253,6 +3253,171 @@ sub render_bullets {
 	# Add a small spacer at the end.
 	$self->render_spacer('0.5em', $container);
 }
+
+=item inputline
+
+Renders a L<Prima::InputLine>, using the specified hashref as the arguments
+to create the widget. Note that the height and width can be specified using
+suffixes supported by L</calculate_size>. In particular, you can specify
+the interactive callback functions such as onKeyUp:
+
+ inputline => {
+   text => 'default text',
+   hint => 'type something interesting',
+   onKeyUp => sub {
+     my ($widget, $code, $key, $mod) = @_;
+     # The slide object can be accessed as a hash member
+     my $slide = $widget->{slide};
+     my $text = $widget->text;
+     ... do cool stuff here ...
+   },
+ }
+
+=cut
+
+sub render_inputline {
+	my ($self, $content, $container) = @_;
+	require Prima::InputLine;
+	
+	# Make sure we have some useful content
+	if (ref($content) ne ref({})) {
+		carp("inputline content type needs a hashref of options; rendering as a paragraph");
+		return $self->render_par($container, $content);
+	}
+	
+	# Get the hash of content
+	my %content = %$content;
+	
+	# Determine computed dimensions
+	$content{height} = $self->slide_deck->calculate_size('inputline height' =>
+		$content->{height}, $container) if exists $content{height};
+	$content{width} = $self->slide_deck->calculate_size('inputline width' =>
+		$content->{width}, $container) if exists $content{width};
+	
+	# Build the widget
+	my $widget = $container->insert(InputLine =>
+		alignment => $self->get_alignment_for($container),
+		color => $container->color,
+		backColor => $container->backColor,
+		pack => { side => 'top', fill => 'x' },
+		%content,
+		font => $self->prepare_font_hash($content{font}, $container),
+	);
+	$widget->{slide} = $self;
+	Scalar::Util::weaken($widget->{slide});
+	return $widget;
+}
+
+=item button
+
+Renders a button. Unlike most widgets, this widget does *not* default to
+the container's default color and backColor. If you want nonstandard button
+colors, you will have to specify them in your content hashref.
+
+=cut
+
+sub render_button {
+	my ($self, $content, $container) = @_;
+	require Prima::Buttons;
+	
+	# Make sure we have some useful content
+	if (ref($content) ne ref({})) {
+		carp("button content type needs a hashref of options; rendering as a paragraph");
+		return $self->render_par($container, $content);
+	}
+	
+	# Get the hash of content
+	my %content = %$content;
+	
+	# Determine computed dimensions
+	$content{height} = $self->slide_deck->calculate_size('inputline height' =>
+		$content->{height}, $container) if exists $content{height};
+	$content{width} = $self->slide_deck->calculate_size('inputline width' =>
+		$content->{width}, $container) if exists $content{width};
+	
+	# Build the button
+	my $widget = $container->insert(Button =>
+		alignment => $self->get_alignment_for($container),
+		#color => $container->color,
+		#backColor => $container->backColor,
+		pack => { side => 'top', fill => 'x' },
+		%content,
+		font => $self->prepare_font_hash($content{font}, $container),
+	);
+	$widget->{slide} = $self;
+	Scalar::Util::weaken($widget->{slide});
+	return $widget;
+}
+
+=item radio_buttons
+
+Renders a set of radio buttons. The text for the buttons themselves should
+be specified in a list called C<selections>.
+
+ radio_buttons => {
+   selections => [ 'One', 'Alpha', 'A' ],
+   onRadio => sub {
+     my ($widget, $selected_radio) = @_;
+     my $text = $selected_radio->text;
+     my $slide = $widget->{slide};
+     ... do something with that information ...
+   },
+   text => 'Pick starting point',
+ },
+
+=cut
+
+# XXX Needs lots of work (along with bullets)
+sub render_radio_buttons {
+	my ($self, $content, $container) = @_;
+	require Prima::Buttons;
+	
+	# Make sure we have some useful content
+	if (ref($content) ne ref({})) {
+		carp("button content type needs a hashref of options; rendering as a paragraph");
+		return $self->render_par($container, $content);
+	}
+	if (not exists $content->{selections} or not ref($content->{selections})
+		or ref($content->{selections}) ne ref([])
+	) {
+		carp('radio_buttons type needs an arrayref of selection texts; rendering as a paragraph');
+		return $self->render_par($container, $content);
+	}
+	
+	# Get the hash of content
+	my %content = %$content;
+	
+	# Determine computed dimensions
+	$content{height} = $self->slide_deck->calculate_size('inputline height' =>
+		$content->{height}, $container) if exists $content{height};
+	$content{width} = $self->slide_deck->calculate_size('inputline width' =>
+		$content->{width}, $container) if exists $content{width};
+	
+	# Build the button group
+	my $widget = $container->insert(GroupBox =>
+		alignment => $self->alignment,
+		color => $container->color,
+		backColor => $container->backColor,
+		pack => { side => 'top', fill => 'x' },
+		%content,
+	);
+	$widget->{slide} = $self;
+	Scalar::Util::weaken($widget->{slide});
+	
+	# Pack the radio buttons
+	for my $text (@{$content{selections}}) {
+		$widget->insert(Radio =>
+			alignment => ta::Left,
+			color => $container->color,
+			backColor => $container->backColor,
+			pack => { side => 'left' },
+			text => $text,
+		);
+	}
+	
+	return $widget;
+}
+
 
 =back
 
