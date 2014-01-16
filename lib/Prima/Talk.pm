@@ -3173,10 +3173,10 @@ sub render_spacer {
 	
 	return $container->insert(Widget =>
 		pack => { side => 'top', fill => 'x' },
-		height => $height,
 		color => $container->color,
 		backColor => $container->backColor,
 		%content,
+		height => $height,
 	);
 }
 
