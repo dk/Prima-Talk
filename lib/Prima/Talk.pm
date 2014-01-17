@@ -769,6 +769,11 @@ A percentage of the width of the current container widget. Given that most
 content packs down from the top, you will usually only use this for the
 L</two_column> renderable.
 
+=item %colwidthleft
+
+A percentage of the remaining free width in the current container widget.
+See C<%colheightleft> for an explanation.
+
 =back
 
 You can also supply your own suffixes. If you are trying a new size spec in
@@ -851,6 +856,20 @@ sub calculate_size {
 			}
 			elsif ($$pack_opts{side} eq 'bottom') {
 				$bottom = $widget->top if $widget->top > $bottom;
+			}
+		}
+		return $size * ($top - $bottom) / 100;
+	}
+	if ($size =~ s/\%colwidthleft//) {
+		my $left = 0;
+		my $right = $container->width;
+		for my $widget ($container->packSlaves) {
+			my $pack_opts = $widget->packInfo;
+			if ($$pack_opts{side} eq 'left') {
+				$left = $widget->right if $widget->right > $left;
+			}
+			elsif ($$pack_opts{side} eq 'right') {
+				$right = $widget->left if $widget->left < $right;
 			}
 		}
 		return $size * ($top - $bottom) / 100;
