@@ -3138,12 +3138,12 @@ sub render_spacer {
 	my ($self, $content, $container) = @_;
 	
 	# One-argument form specifies the height
-	$content = { height => $content } unless ref($content);
+	$content = { size => $content } unless ref($content);
 	
 	my %content = %$content;
 	
-	my $height = $self->slide_deck->calculate_size( spacer_height =>
-		$content{height}, $container
+	my $size = $self->slide_deck->calculate_size( spacer_size =>
+		delete $content{size}, $container
 	);
 	
 	return $container->insert(Widget =>
@@ -3151,7 +3151,8 @@ sub render_spacer {
 		color => $container->color,
 		backColor => $container->backColor,
 		%content,
-		height => $height,
+		height => $size,
+		width => $size,
 	);
 }
 
