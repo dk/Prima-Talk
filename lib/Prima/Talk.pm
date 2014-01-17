@@ -872,7 +872,7 @@ sub calculate_size {
 				$right = $widget->left if $widget->left < $right;
 			}
 		}
-		return $size * ($top - $bottom) / 100;
+		return $size * ($right - $left) / 100;
 	}
 	
 	# Handle special suffixes
