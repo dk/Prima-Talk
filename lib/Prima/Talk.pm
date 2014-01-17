@@ -2644,7 +2644,7 @@ sub alignment {
 
 sub get_alignment_for {
 	my ($self, $widget) = @_;
-	# First, does the widget have the algnment property?
+	# First, does the widget have the alignment property?
 	return $widget->alignment if eval{$widget->can('alignment')};
 	# OK, does it have an alignment property?
 	return $widget->{alignment} if exists $widget->{alignment};
@@ -2790,6 +2790,8 @@ sub render_container {
 		height => $height,
 		width => $width,
 	);
+	# Have to store this in the associated hashref, since Widgets do not
+	# know about alignment.
 	$to_return->{alignment} = $self->get_alignment_for($content->{alignment});
 	return $to_return;
 }
