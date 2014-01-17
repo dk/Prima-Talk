@@ -80,7 +80,7 @@ sub insert {
 	# If this insert does not specify a cp::XXX, then use the normal
 	# insertion process. If there is no packing hash at all, then use the
 	# defaults for Container children.
-	$args{pack} ||= {side => cp::Default};
+	$args{pack} ||= {side => cp::Default} unless $args{place};
 	my $pack = $args{pack};
 	return $self->Prima::Widget::insert($class_name, %args)
 		unless exists $pack->{side} and looks_like_number($pack->{side});
