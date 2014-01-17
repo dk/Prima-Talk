@@ -1993,6 +1993,7 @@ class or by supplying the class name to your slide deck's L</add> method.
 ############################################################################
 use Carp;
 @Prima::Talk::Slide::CARP_NOT = ('Prima::Talk');
+use Scalar::Util qw( refaddr );
 
 sub new {
 	my $class = shift;
@@ -2580,7 +2581,6 @@ sub setup {
 	);
 	
 	# Render the content
-	# working here - add multicolumn support
 	$self->render_content($container, title => $self->title, $self->content);
 	
 	# Render notes, if applicable
@@ -2618,13 +2618,27 @@ standard em-width, not the container's em-width.
 
 sub prepare_font_hash {
 	my ($self, $hashref, $container) = @_;
-	return $container->font if not defined $hashref;
+	
+	# Get the container font and apply the font factor if this is the
+	# parent container.
+	my %container_font = %{$container->font};
+	if (refaddr($container) == refaddr($self->slide_deck->container)
+		and $self->font_factor != 1
+	) {
+		# Adjust the size if there is a font factor to worry about
+		%container_font = %{$container->font_match(
+			{size => $container_font{size} * $self->font_factor },
+			\%container_font, 1)
+		};
+	}
+	
+	return \%container_font if not defined $hashref;
 	
 	my %font = %$hashref;
 	# Account for relative sizes.
 	if ($font{size}) {
 		if ($font{size} =~ s/x$//) {
-			$font{size} = $container->font->size * $font{size};
+			$font{size} = $container_font{size} * $font{size};
 		}
 		elsif ($font{size} =~ /[^\d.]/) {
 			$font{size} = $self->slide_deck->calculate_size('font_size',
@@ -2633,14 +2647,14 @@ sub prepare_font_hash {
 	}
 	if ($font{height}) {
 		if ($font{height} =~ s/x$//) {
-			$font{height} = $container->font->height * $font{height};
+			$font{height} = $container_font{height} * $font{height};
 		}
 		elsif ($font{height} =~ /[^\d.]/) {
 			$font{height} = $self->slide_deck->calculate_size('font_height',
 				$font{height}, $container);
 		}
 	}
-	return $container->font_match(\%font, $container->font, 1);
+	return $container->font_match(\%font, \%container_font, 1);
 }
 
 
