@@ -3203,28 +3203,20 @@ sub render_bullets {
 			packChildren => cp::FromLeft,
 			%content,
 		);
-		# Insert a phantom bullet to make the packer happy, but actually
-		# use "place" to render the bullet where we want it
-		my $shadow_bullet = $bullet_container->insert(Label =>
-			pack => { side => 'left', padx => 20 },
-			text => $bullet,
-			visible => 0,
-		);
+		# Insert the bullet the same way for each line
 		my $bullet = $bullet_container->insert(Label =>
-			place => {
-				x => 8, width => $shadow_bullet->width, anchor => 'sw',
-				rely => 1, y => -$height, height => $height,
-			},
+			pack => { side => 'left', padx => 20, anchor => 'n', expand => 'y' },
 			%content,
 			text => $bullet,
 			alignment => ta::Center,
+			height => $height,
 		);
-		my $text_width = $container->width - $shadow_bullet->width;
+		# Insert the text
+		my $text_width = $container->width - $bullet->width;
 		$self->render_par({
 			%content,
 			width => $text_width,
 			text => $bullet_text,
-			# XXX This needs to be handled better
 			alignment => ta::Left,
 			pack => { side => 'left', fill => 'x' },
 		}, $bullet_container);
