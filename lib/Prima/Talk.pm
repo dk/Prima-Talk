@@ -2881,6 +2881,11 @@ sub render_container {
 	$to_return->{alignment} = $params{alignment}
 		|| $self->get_alignment_for($parent_container);
 	
+	# Since the specs are sent via an arrayref instead of a hashref, the
+	# normal stashing mechanism doesn't work, so I have to take care of it
+	# manually.
+	$self->{stash}->{$params{name}} = $to_return if $params{name};
+	
 	# Finish by rendering the specified content
 	$self->render_content($to_return, @content);
 	return $to_return;
