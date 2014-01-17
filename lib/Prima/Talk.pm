@@ -240,7 +240,7 @@ is ignored.
 
 =cut
 
-use Prima qw(Label MsgBox FileDialog StretchyImage InputLine);
+use Prima qw(Label MsgBox FileDialog StretchyImage InputLine Container);
 use Prima::PS::Drawable;
 use Prima::Drawable::Subcanvas;
 
@@ -557,7 +557,7 @@ sub init {
 	);
 	my $padding = $self->{padding} = $profile{padding};
 	# Add the main container
-	$self->{main_container} = $lower_container->insert(Widget =>
+	$self->{main_container} = $lower_container->insert(Container =>
 		place => {
 			x => $toc_width + $padding, relwidth => 1,
 			width => -$toc_width - 2 * $padding,
@@ -2159,7 +2159,14 @@ you provide a non-number, or a negative number (and default to a factor of 1).
 
  alignment => ta::Left|ta::Right|ta::Center
 
-Sets the slide's default alignment
+Sets the slide's default alignment.
+
+=item packChildren
+
+ packChildren => cp::XXXX
+
+Set the slide's default container packing direction. The deaul is
+C<cp::FromTop>. See L<Prima::Container> for details about.
 
 =back
 
@@ -2452,20 +2459,20 @@ sub init {
 		carp('Ignoring non-numeric or negative font_factor');
 		$self->{font_factor} = 1;
 	}
+	
+	# Set up the packing direction
+	$self->{packChildren} ||= cp::FromTop;
+	if (not Prima::Container::Role::name_for($self->{packChildren})) {
+		carp("Unknown slide packing direction $self->{packChildren}");
+		$self->{packChildren} = cp::FromTop;
+	}
 
 	# gripe if they don't have content
 	if (not defined $self->{content}) {
 		carp('No content for slide!');
 		$self->{content} = [par => 'No content'];
 	}
-	# If they supplied a single text string, interpret it as a paragraph
-	elsif (ref ($self->{content}) eq ref('')) {
-		$self->{content} = [par => $self->{content}];
-	}
-	# If they supplied a single subref, set it up to be run
-	elsif (ref ($self->{content}) eq ref(sub{})) {
-		$self->{content} = [subref => $self->{content}];
-	}
+	$self->{content} = $self->encapsulate_content($self->{content});
 }
 
 sub slide_deck {
@@ -2485,6 +2492,21 @@ sub toc_entry {
 	return $_[0]->{toc_entry} if @_ == 1;
 	my ($self, $toc_entry) = @_;
 	$self->{toc_entry} = $toc_entry;
+}
+
+sub encapsulate_content {
+	my ($self, $content) = @_;
+	# Arrays are exactly what we exect.
+	return $content if ref($content) eq ref([]);
+	# Subref?
+	return [subref => $content] if ref($content) eq ref(sub{});
+	# String?
+	return [par => $content] if ref($content) eq ref('');
+	if (ref($content) eq ref({})) {
+		carp("Content passed in an anonymous hash; better to pass "
+			."in an anonymous array to guarantee content order");
+		return [ %$content ];
+	}
 }
 
 sub content {
@@ -2535,6 +2557,9 @@ sub setup {
 	$self->set_toc_visibility;
 	$self->set_footer_visibility;
 	my $container = $self->slide_deck->container;
+	
+	# Set the default packing direction
+	$container->packChildren($self->{packChildren});
 	
 	# Focus on the talk widget. User interaction with widgets on previous
 	# slides can cause us to lose focus and therefore not get slide advance
@@ -2618,6 +2643,7 @@ sub prepare_font_hash {
 
 sub render_content {
 	my ($self, $container, @content) = @_;
+
 	while (@content) {
 		my ($type, $stuff) = (shift @content, shift @content);
 		my $rendered_content;
@@ -2644,11 +2670,11 @@ sub alignment {
 
 sub get_alignment_for {
 	my ($self, $widget) = @_;
-	# First, does the widget have the alignment property?
+	# check widget for an alignment property
 	return $widget->alignment if eval{$widget->can('alignment')};
-	# OK, does it have an alignment property?
+	# OK, does it have an alignment key?
 	return $widget->{alignment} if exists $widget->{alignment};
-	# OK, return *our* alignment if all else fails
+	# OK, return the slide's default alignment if all else fails
 	return $self->alignment;
 }
 
@@ -2740,10 +2766,11 @@ own:
 
 =item container
 
-The most generic content type is simply an empty container widget. A
-container takes a hashref of arguments with keys that can include height,
-width, color, backColor, alignment, name, font, and all normal L<Prima::Widget>
-properties:
+The most generic content type is simply a container widget. A container
+takes a hashref of arguments with keys that can include alignment, name,
+font, packChildren, and content, as well as normal L<Prima::Widget>
+properties including height, width, color and backColor. The alignment and
+font simply serve as defaults for any child widgets.
 
    ...
    content => [
@@ -2751,16 +2778,17 @@ properties:
      container => {
        height => '10%colheight', name => 'upper_container',
        font => { style => fs::Bold }, alignment => ta::Right,
+       content => [
+         ...
+       ],
      },
      ...
    ],
    ...
 
-Containers do not provide any shorthand for rendering content inside them.
-However, if you provide a name, you can easily access a container during
-rendering callbacks or in transitions, adding or removing content. The font,
-alignment, and other properties are used as the defaults for any child
-content.
+Note that none of these keys are required (though failing to specify any of
+them would be rather odd). Furthermore, note that the default height is
+C<99%colheightleft> and the default width is C<99%colwidthleft>.
 
 If you simply need a spacer, use the L<spacer|/spacer> content type, which
 is even simpler than the container.
@@ -2775,16 +2803,16 @@ sub render_container {
 	}
 	
 	my $height = $self->slide_deck->calculate_size(container_height =>
-		$content->{height} || '99%colheight', $parent_container
+		$content->{height} || '99%colheightleft', $parent_container
 	);
 	my $width = $self->slide_deck->calculate_size(container_width =>
-		$content->{width} || '99%colwidth', $parent_container
+		$content->{width} || '99%colwidthleft', $parent_container
 	);
 	my $font = $self->prepare_font_hash($content->{font}, $parent_container);
-	my $to_return = $parent_container->insert(Widget =>
+	my $to_return = $parent_container->insert(Container =>
 		color => $parent_container->color,
 		backColor => $parent_container->backColor,
-		pack => { side => 'top', fill => 'x' },
+		pack => { side => cp::Default, fill => 1 },
 		%$content,
 		font => $font,
 		height => $height,
@@ -2792,7 +2820,14 @@ sub render_container {
 	);
 	# Have to store this in the associated hashref, since Widgets do not
 	# know about alignment.
-	$to_return->{alignment} = $self->get_alignment_for($content->{alignment});
+	$to_return->{alignment} = $content->{alignment}
+		|| $self->get_alignment_for($parent_container);
+	
+	return $to_return unless $content->{content};
+	
+	# Finish by rendering the specified content
+	my $internal_content = $self->encapsulate_content($content->{content});
+	$self->render_content($to_return, @$internal_content);
 	return $to_return;
 }
 
@@ -2808,41 +2843,34 @@ alignment.
 
 sub render_par {
 	my ($self, $content, $container) = @_;
-	# XXX Alignment needs to be handled better wrt parent containers.
-	my %params = ( alignment => $self->alignment );
-	if (ref($content)) {
-		%params = (%params, %$content);
-	}
-	else {
-		$params{text} = $content;
-	}
-	
-	if (not exists $params{text}) {
+	$content = { text => $content } unless ref($content);
+	my %content = %$content;
+	if (not exists $content{text}) {
 		carp("No text for paragraph; skipping");
 		return;
 	}
 	
 	# Die on deprecated font_factor behavior
-	confess("par font_factor was removed; specify font => { size => '$params{font_factor}x' } instead\n")
-		if exists $params{font_factor};
+	confess("par font_factor was removed; specify font => { size => '$content{font_factor}x' } instead\n")
+		if exists $content{font_factor};
 	
 	# Merge the font hash
-	$params{font} = $self->prepare_font_hash($params{font}, $container);
+	$content{font} = $self->prepare_font_hash($content{font}, $container);
 	
 	# Clean out extra whitespace
-	$params{text} =~ s/\s+/ /g;
+	$content{text} =~ s/\s+/ /g;
 	# Remove beginning and trailing whitespace
-	$params{text} =~ s/^\s+//;
-	$params{text} =~ s/\s+$//;
+	$content{text} =~ s/^\s+//;
+	$content{text} =~ s/\s+$//;
 	
 	my $label = $container->insert(Label =>
 		color => $container->color,
 		backColor => $container->backColor,
 		autoHeight => 1,
-		pack => { side => 'top', fill => 'x' },
+		pack => { side => cp::Default, fill => 1 },
 		wordWrap => 1,
 		alignment => $self->get_alignment_for($container),
-		%params,
+		%content,
 	);
 	return $label;
 }
@@ -3004,8 +3032,8 @@ sub render_image {
 		color => $container->color,
 		backColor => $container->backColor,
 		preserveAspect => 1,
+		pack => { side => cp::Default, fill => 1 },
 		%content,
-		pack => { side => 'top', fill => 'x' },
 	);
 }
 
@@ -3037,140 +3065,6 @@ sub render_plot {
 	return $plot;
 }
 
-=item two_column
-
-The two column rendering type expects a hashref with options. Keys to set
-the dimensions of the columns include C<left_width>, C<right_width>, and
-C<height>. Keys that specify the content for each column are C<left> and
-C<right>, which should correspond to hashrefs.
-
-Unlike most other content types, two_column will actually croak if you
-do not provide a hashref. There is simply no way for it to do anything
-sensible with a scalar input.
-
-When called as a function (C<render_two_column>), this renderable differs
-from most others by returning different things in different contexts. This
-renderable actally builds an outer container into which it packs the two
-columns, and in scalar context returns that outer container. In list
-context, however, it returns the left and right containers. As such, these
-two blocks of code achieve nearly the same end:
-
- # option one:
- my ($left_col, $right_col)
-   = $slide->render_two_column({
-     left_width  => '40%colwidth',
-     right_width => '55%colwidth',
-   }, $container);
- # Now carry on with $left_col and $right_col ...
- 
- # option two:
- $slide->render_two_column({
-   left_width  => '40%colwidth',
-   left_name   => 'dates',
-   right_width => '55%colwidth',
-   right_name  => 'times',
- }, $container);
- # Now carry on with $slide->dates and $slide->times ...
-
-Although the upper example is less verbose, the containers declared in the
-second example can be accessed by name as slide methods in later code. For
-example, if you anticipate updating the contents of a column in one or more
-slide transitions, it is probably best to name your columns. If you simply
-need to dynamically construct the columns in a coderef, then getting the
-two containers as the return values from the rendering method is probably
-easier.
-
-=cut
-
-# XXX work on better general container property handling
-# Let a user specify left_props => { width => ..., name => ..., etc }
-# instead of the left_width, left_name, etc
-# Then render using the container rendering.
-sub render_two_column {
-	my ($self, $content, $container) = @_;
-	croak("two_column expects a hashref")
-		unless ref($content) eq ref({});
-	my $full_width = $container->width;
-	my $left_width = $self->slide_deck->calculate_size( left_width =>
-		$content->{left_width} || '48%colwidth', $container
-	);
-	my $right_width = $self->slide_deck->calculate_size( right_width =>
-		$content->{right_width} || '48%colwidth', $container
-	);
-	my $height = $self->slide_deck->calculate_size( two_column_height =>
-		$content->{height} || '99%colheight', $container
-	);
-	
-	my $two_container = $container->insert(Widget =>
-		height => $height,
-		pack => { side => 'top', fill => 'x' },
-		color => $container->color,
-		backColor => $container->backColor,
-	);
-	$two_container->font->size($self->font_size);
-	
-	# Render the left content
-	my $left_column = $two_container->insert(Widget =>
-		width => $left_width,
-		height => $height,
-		place => { x => 0, width => $left_width, anchor => 'sw' },
-		color => $container->color,
-		backColor => $container->backColor,
-	);
-	if ($content->{left_name}) {
-		$self->{stash}->{$content->{left_name}} = $left_column;
-	}
-	my @content;
-	if ($content->{left}) {
-		if (ref($content->{left}) eq ref([])) {
-			@content = @{$content->{left}};
-		}
-		elsif (ref($content->{left}) eq ref({})) {
-			carp("Left content passed in an anonymous hash; better to pass "
-				."in an anonymous array to guarantee content order");
-			@content = %{$content->{left}};
-		}
-		else {
-			carp("Unknown left content; skipping");
-		}
-	}
-	$self->render_content($left_column, @content);
-	
-	# Render the right content
-	my $right_column = $two_container->insert(Widget =>
-		width => $right_width,
-		height => $height,
-		place => {
-			x => $full_width - $right_width, width => $right_width, anchor => 'sw'
-		},
-		color => $container->color,
-		backColor => $container->backColor,
-	);
-	if ($content->{left_name}) {
-		$self->{stash}->{$content->{left_name}} = $left_column;
-	}
-	if ($content->{right}) {
-		if (ref($content->{right}) eq ref([])) {
-			@content = @{$content->{right}};
-		}
-		elsif (ref($content->{right}) eq ref({})) {
-			carp("Right content passed in an anonymous hash; better to pass "
-				."in an anonymous array to guarantee content order");
-			@content = %{$content->{right}};
-		}
-		else {
-			carp("Unknown right content; skipping");
-		}
-	}
-	$self->render_content($right_column, @content);
-	
-	# Return either the main container or both columns, depending on the
-	# calling context.
-	return unless defined wantarray;
-	return $two_container unless wantarray;
-	return ($left_column, $right_column);
-}
-
 =item spacer
 
 Accepts a height, or a hashref that can specify color and backColor, among
@@ -3193,7 +3087,7 @@ sub render_spacer {
 	);
 	
 	return $container->insert(Widget =>
-		pack => { side => 'top', fill => 'x' },
+		pack => { side => cp::Default, fill => 1 },
 		color => $container->color,
 		backColor => $container->backColor,
 		%content,
@@ -3244,7 +3138,7 @@ sub render_bullets {
 	# For each bullet, pack the bullet then the paragraph
 	for my $bullet_text (@{$content{bullets}}) {
 		my $bullet_container = $container->insert(Widget =>
-			pack => { side => 'top', fill => 'x' },
+			pack => { side => cp::Default, fill => 1 },
 			%content,
 		);
 		# Insert a phantom bullet to make the packer happy, but actually
@@ -3320,7 +3214,7 @@ sub render_inputline {
 		alignment => $self->get_alignment_for($container),
 		color => $container->color,
 		backColor => $container->backColor,
-		pack => { side => 'top', fill => 'x' },
+		pack => { side => cp::Default, fill => 1 },
 		%content,
 		font => $self->prepare_font_hash($content{font}, $container),
 	);
@@ -3361,7 +3255,7 @@ sub render_button {
 		alignment => $self->get_alignment_for($container),
 		#color => $container->color,
 		#backColor => $container->backColor,
-		pack => { side => 'top', fill => 'x' },
+		pack => { side => cp::Default, fill => 1 },
 		%content,
 		font => $self->prepare_font_hash($content{font}, $container),
 	);
@@ -3415,11 +3309,11 @@ sub render_radio_buttons {
 		$content->{width}, $container) if exists $content{width};
 	
 	# Build the button group
-	my $widget = $container->insert(GroupBox =>
+	my $widget = $container->insert(GroupContainer =>
 		alignment => $self->alignment,
 		color => $container->color,
 		backColor => $container->backColor,
-		pack => { side => 'top', fill => 'x' },
+		pack => { side => cp::Default, fill => 1 },
 		%content,
 	);
 	$widget->{slide} = $self;
@@ -3431,7 +3325,7 @@ sub render_radio_buttons {
 			alignment => ta::Left,
 			color => $container->color,
 			backColor => $container->backColor,
-			pack => { side => 'left' },
+			pack => { side => cp::Default, fill => 1 },
 			text => $text,
 		);
 	}
