@@ -3111,7 +3111,7 @@ sub render_plot {
 	my $plot = $container->insert(Plot =>
 		color => $container->color,
 		backColor => $container->backColor,
-		pack => { side => 'top' },
+		pack => { side => cp::Default },
 		%$content,
 		font => $self->prepare_font_hash($content->{font}, $container),
 		height => $height,
