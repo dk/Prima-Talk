@@ -2835,8 +2835,8 @@ sub render_container {
 		$content = [ subref => $content ];
 	}
 	elsif (ref($content) eq ref({})) {
-		carp("container passed in an anonymous hash; better to pass "
-			."in an anonymous array to guarantee content order");
+		carp("container's content is an anonymous hash; better to user "
+			."an anonymous array to guarantee content order");
 		$content = [ %$content ];
 	}
 	elsif (ref($content) ne ref([])) {
