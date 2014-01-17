@@ -2471,8 +2471,8 @@ sub init {
 sub slide_deck {
 	return $_[0]->{slide_deck} if @_ == 1;
 	my ($self, $deck) = @_;
-	# XXX weaken?
 	$self->{slide_deck} = $deck;
+	Scalar::Util::weaken($self->{slide_deck});
 }
 
 sub title {
