@@ -3137,8 +3137,9 @@ sub render_bullets {
 	
 	# For each bullet, pack the bullet then the paragraph
 	for my $bullet_text (@{$content{bullets}}) {
-		my $bullet_container = $container->insert(Widget =>
+		my $bullet_container = $container->insert(Container =>
 			pack => { side => cp::Default, fill => 1 },
+			packChildren => cp::FromLeft,
 			%content,
 		);
 		# Insert a phantom bullet to make the packer happy, but actually
@@ -3157,11 +3158,14 @@ sub render_bullets {
 			text => $bullet,
 			alignment => ta::Center,
 		);
+		my $text_width = $container->width - $shadow_bullet->width;
 		$self->render_par({
 			%content,
+			width => $text_width,
 			text => $bullet_text,
 			# XXX This needs to be handled better
 			alignment => ta::Left,
+			pack => { side => 'left', fill => 'x' },
 		}, $bullet_container);
 	}
 	
