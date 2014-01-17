@@ -1988,8 +1988,11 @@ class or by supplying the class name to your slide deck's L</add> method.
 
 =cut
 
-package Prima::Talk::Slide;
+############################################################################
+                    package Prima::Talk::Slide;
+############################################################################
 use Carp;
+@Prima::Talk::Slide::CARP_NOT = ('Prima::Talk');
 
 sub new {
 	my $class = shift;
@@ -2767,67 +2770,105 @@ own:
 =item container
 
 The most generic content type is simply a container widget. A container
-takes a hashref of arguments with keys that can include alignment, name,
-font, packChildren, and content, as well as normal L<Prima::Widget>
-properties including height, width, color and backColor. The alignment and
-font simply serve as defaults for any child widgets.
+takes an arrayref of key/value pairs or a coderef. Keys can be property
+names, in which case they specify the container's property by that name.
+They can also be content types, which are rendered in the container in the
+order that they are specified. Properties include alignment, name, font, and
+packChildren, as well as normal L<Prima::Widget> properties including height,
+width, color and backColor. The alignment and font simply serve as defaults
+for any child widgets.
 
-   ...
-   content => [
-     ...
-     container => {
-       height => '10%colheight', name => 'upper_container',
-       font => { style => fs::Bold }, alignment => ta::Right,
-       content => [
-         ...
-       ],
-     },
-     ...
-   ],
-   ...
+ container => [
+   height => '10%colheight', name => 'upper_container',
+   font => { style => fs::Bold }, alignment => ta::Right,
+   par => 'some text',
+   image => 'filename.png',
+ ],
 
 Note that none of these keys are required (though failing to specify any of
 them would be rather odd). Furthermore, note that the default height is
 C<99%colheightleft> and the default width is C<99%colwidthleft>.
+
+You can mix and match properties with content, but it is probably best to
+put all our content together, either at the beginning or the end of the
+argument list.
+
+Passing a coderef is nearly the same as the L<subref> content type, except
+that the container passed to this coderef will be a freshly built container
+rather than the parent container.
 
 If you simply need a spacer, use the L<spacer|/spacer> content type, which
 is even simpler than the container.
 
 =cut
 
+my %other_keys = (qw(
+	name      1
+	alignment 1
+));
 sub render_container {
 	my ($self, $content, $parent_container) = @_;
-	unless (ref($content) and ref($content) eq ref({})) {
-		carp("Container expects a hashref specification; skipping");
+	if (not defined $content) {
+		carp("container has no content. Defaulting o a paragraph.");
+		$content = [ par => 'Container with no content' ];
+	}
+	elsif (not ref($content)) {
+		carp("container's content is a plain scalar; rendering it as a paragraph.");
+		$content = [ par => $content ];
+	}
+	elsif (ref($content) eq  ref(sub{})) {
+		# Subrefs are allowed for immediate trickery.
+		$content = [ subref => $content ];
+	}
+	elsif (ref($content) eq ref({})) {
+		carp("container passed in an anonymous hash; better to pass "
+			."in an anonymous array to guarantee content order");
+		$content = [ %$content ];
+	}
+	elsif (ref($content) ne ref([])) {
+		carp("container expects an arrayref or coderef, but you sent "
+			. ref($content) . "; skipping");
 		return;
 	}
+	my @content = @$content;
+	carp('Odd number of elements in container specification')
+		if @content % 2 == 1;
 	
-	my $height = $self->slide_deck->calculate_size(container_height =>
-		$content->{height} || '99%colheightleft', $parent_container
+	my @params;
+	my $i = 0;
+	while ($i < @content) {
+		# If a Prima::Container knows how to "do" this key, then it's a
+		# container property, and we add it to the properties.
+		my $key = $content[$i];
+		if ('Prima::Container'->can($key) or $other_keys{$key}) {
+			push @params, splice (@content, $i, 2);
+		}
+		else {
+			$i += 2;
+		}
+	}
+	my %params = @params;
+	
+	$params{height} = $self->slide_deck->calculate_size(container_height =>
+		$params{height} || '99%colheightleft', $parent_container
 	);
-	my $width = $self->slide_deck->calculate_size(container_width =>
-		$content->{width} || '99%colwidthleft', $parent_container
+	$params{width} = $self->slide_deck->calculate_size(container_width =>
+		$params{width} || '99%colwidthleft', $parent_container
 	);
-	my $font = $self->prepare_font_hash($content->{font}, $parent_container);
+	$params{font} = $self->prepare_font_hash($params{font}, $parent_container);
 	my $to_return = $parent_container->insert(Container =>
 		color => $parent_container->color,
 		backColor => $parent_container->backColor,
 		pack => { side => cp::Default, fill => 1 },
-		%$content,
-		font => $font,
-		height => $height,
-		width => $width,
+		%params,
 	);
-	# Have to store this in the associated hashref, since Widgets do not
+	# Have to store this in the associated hashref, since Containers do not
 	# know about alignment.
-	$to_return->{alignment} = $content->{alignment}
+	$to_return->{alignment} = $params{alignment}
 		|| $self->get_alignment_for($parent_container);
 	
-	return $to_return unless $content->{content};
-	
 	# Finish by rendering the specified content
-	my $internal_content = $self->encapsulate_content($content->{content});
-	$self->render_content($to_return, @$internal_content);
+	$self->render_content($to_return, @content);
 	return $to_return;
 }
 
