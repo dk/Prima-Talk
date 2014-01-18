@@ -433,6 +433,7 @@ sub init {
 	) ) {
 		$self->{$prop_name} = $profile{$prop_name};
 	}
+	$self->spellchecker($profile{spellchecker}) if $profile{spellchecker};
 	
 	# Copy the notes window, if supplied
 	if (exists $profile{notes_window} ) {
@@ -1169,6 +1170,84 @@ Returns the main container object, into which slide contents should be added.
 
 sub container {
 	return $_[0]->{main_container};
+}
+
+=head2 spellchecker
+
+C<Prima::Talk> supports simple spell checking. The way this works is that
+you can associate an anonymous function with the C<spellchecker> key. The
+different rendering types then run their content through the spell checking
+routine by invoking the slide deck's C<spellcheck> method on whatever text
+they intend to display.
+
+All of this means that I<you> will have to actually implement something that
+invokes a spell checker and does something useful. For example, you could
+install L<Text::Aspell> or L<Text::Hunspell> and invoke those modules on the
+text you get. Alternately, you could manage your own dictionary with
+something like this:
+
+ # Create a simple dictionary as a hash of
+ # words from a personal collection.
+ my %dictionary;
+ open my $in_fh, '<', 'my-words.txt';
+ while (my $word = <$in_fh>) {
+     chomp $word;
+     $dictionary{$word} = 1;
+ }
+
+Then you could use that hash in your spellchecker callback:
+
+ my $talk = $window->insert(Talk =>
+     ...
+     spellchecker => sub {
+         my ($self, $phrase) = @_;
+         for my $word (split /[^\w]+/, $phrase) {
+             next if $word !~ /\D/; # skip numbers
+             warn "Possibly mis-spelled word `$word'\n"
+                 if not $dictionary{$word}
+                     and not $dictionary{lc $word};
+         }
+     },
+ );
+
+You need not limit yourself to spellchecking, of course. Since you have the
+whole phrase, you could perform a grammar check, for example. Also, you
+could make the warnings much more sophistocated and user friendly by
+building an interface into your notes window, for example. The spellchecker
+could then interact with that interface.
+
+=cut
+
+sub spellchecker {
+	return $_[0]->{spellchecker} if @_ == 1;
+	my ($self, $spellchecker) = @_;
+	if (ref($spellchecker) ne ref(sub{})) {
+		carp('spellchecker must be a subref; ignoring');
+		return;
+	}
+	$self->{spellchecker} = $spellchecker;
+}
+
+=head2 spellcheck
+
+Calls the slide deck's spellchecker, if one was provided. This will call the
+spellchecker funcion on as many arguments as you provide:
+
+ $talk->spellcheck($phrase1, $phrase2, ...);
+
+Note that there is no return value. Any side-effects should be handled
+directly by the spellchecker. This should mostly be used by content
+renderers to notify you of mis-spellings when they are rendering their
+content.
+
+=cut
+
+sub spellcheck {
+	my $self = shift;
+	return unless $self->{spellchecker};
+	for my $phrase (@_) {
+		$self->{spellchecker}->($self, $phrase);
+	}
 }
 
 =head2 toc_width
@@ -2562,6 +2641,13 @@ sub setup {
 	$self->set_footer_visibility;
 	my $container = $self->slide_deck->container;
 	
+	# Spell-check the title and toc-entry. (I would prefer to do this during
+	# init, but we don't have the slide-deck's spellchecker up and running
+	# yet.)
+	$self->slide_deck->spellcheck($self->{title});
+	$self->slide_deck->spellcheck($self->{toc_entry})
+		if $self->{toc_entry} ne $self->{title};
+	
 	# Set the default packing direction
 	$container->packChildren($self->{packChildren});
 	
@@ -2697,6 +2783,7 @@ sub get_alignment_for {
 
 sub render_title {
 	my ($self, $title, $container) = @_;
+	# Note that the title (and toc) is spellchecked by setup()
 	$self->slide_deck->set_title($title);
 }
 
@@ -2914,6 +3001,8 @@ sub render_par {
 	confess("par font_factor was removed; specify font => { size => '$content{font_factor}x' } instead\n")
 		if exists $content{font_factor};
 	
+	$self->slide_deck->spellcheck($content{text});
+	
 	# Merge the font hash
 	$content{font} = $self->prepare_font_hash($content{font}, $container);
 	
@@ -2993,6 +3082,8 @@ sub render_tex {
 		carp("No tex content; skipping");
 		return;
 	}
+	
+	$self->slide_deck->spellcheck($content{tex});
 	
 	# Extract the package details and string of tex
 	my $packages = delete $content{packages} || '';
@@ -3113,6 +3204,7 @@ sub render_plot {
 	my $width = $self->slide_deck->calculate_size(plot_width =>
 		$content->{width} || '99%colwidth', $container
 	);
+	$self->slide_deck->spellcheck($content->{title}) if $content->{title};
 	my $plot = $container->insert(Plot =>
 		color => $container->color,
 		backColor => $container->backColor,
@@ -3220,6 +3312,7 @@ sub render_bullets {
 			alignment => ta::Left,
 			pack => { side => 'left', fill => 'x' },
 		}, $bullet_container);
+		$self->slide_deck->spellcheck($bullet_text);
 	}
 	
 	# Add a small spacer at the end.
@@ -3307,6 +3400,8 @@ sub render_button {
 	$content{width} = $self->slide_deck->calculate_size('inputline width' =>
 		$content->{width}, $container) if exists $content{width};
 	
+	$self->slide_deck->spellcheck($content{text});
+	
 	# Build the button
 	my $widget = $container->insert(Button =>
 		alignment => $self->get_alignment_for($container),
@@ -3375,6 +3470,8 @@ sub render_radio_buttons {
 	);
 	$widget->{slide} = $self;
 	Scalar::Util::weaken($widget->{slide});
+	
+	$self->slide_deck->spellcheck(@{$content{selections}});
 	
 	# Pack the radio buttons
 	for my $text (@{$content{selections}}) {
