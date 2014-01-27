@@ -3006,6 +3006,11 @@ sub render_par {
 	# Merge the font hash
 	$content{font} = $self->prepare_font_hash($content{font}, $container);
 	
+	$content{height} = $self->slide_deck->calculate_size(container_height =>
+		$content{height}, $container) if exists $content{height};
+	$content{width} = $self->slide_deck->calculate_size(container_width =>
+		$content{width}, $container) if exists $content{width};
+	
 	# Clean out extra whitespace
 	$content{text} =~ s/\s+/ /g;
 	# Remove beginning and trailing whitespace
