@@ -2910,7 +2910,7 @@ my %other_keys = (qw(
 sub render_container {
 	my ($self, $content, $parent_container) = @_;
 	if (not defined $content) {
-		carp("container has no content. Defaulting o a paragraph.");
+		carp("container has no content. Defaulting to a paragraph.");
 		$content = [ par => 'Container with no content' ];
 	}
 	elsif (not ref($content)) {
@@ -2922,7 +2922,7 @@ sub render_container {
 		$content = [ subref => $content ];
 	}
 	elsif (ref($content) eq ref({})) {
-		carp("container's content is an anonymous hash; better to user "
+		carp("container's content is an anonymous hash; better to use "
 			."an anonymous array to guarantee content order");
 		$content = [ %$content ];
 	}
