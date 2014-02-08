@@ -2978,6 +2978,34 @@ sub render_container {
 	return $to_return;
 }
 
+=item hcontainer
+
+Renders a container with a default C<packChildren> value of C<cp::FromLeft>.
+
+=cut
+
+sub render_hcontainer {
+	my ($self, $content, $container) = @_;
+	croak('content for hcontainer must be an arrayref')
+		unless ref($content) eq ref([]);
+	return $self->render_container(
+		[@$content, packChildren => cp::FromLeft], $container);
+}
+
+=item vcontainer
+
+Renders a container with a default C<packChildren> value of C<cp::FromTop>.
+
+=cut
+
+sub render_vcontainer {
+	my ($self, $content, $container) = @_;
+	croak('content for vcontainer must be an arrayref')
+		unless ref($content) eq ref([]);
+	return $self->render_container(
+		[@$content, packChildren => cp::FromTop], $container);
+}
+
 =item par
 
 Renders a paragraph of text. The content renderer expects either a string
