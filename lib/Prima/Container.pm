@@ -81,31 +81,32 @@ sub insert {
 	# insertion process. If there is no packing hash at all, then use the
 	# defaults for Container children.
 	$args{pack} ||= {side => cp::Default} unless $args{place};
-	my $pack = $args{pack};
+	my %pack = %{$args{pack}};
 	return $self->Prima::Widget::insert($class_name, %args)
-		unless exists $pack->{side} and looks_like_number($pack->{side});
+		unless exists $pack{side} and looks_like_number($pack{side});
 	croak("Invalid Prima::Container pack side")
-		unless name_for($pack->{side});
+		unless name_for($pack{side});
 	
 	# Sanity check their fill option (default is 'none', so this doesn't
 	# hurt anything)
-	$pack->{fill} ||= 'none';
-	croak("Prima::Container::insert found invalid pack fill [$pack->{fill}]")
-		if $pack->{fill} =~ /^[xy]$/;
+	croak("Prima::Container::insert found invalid pack fill [$pack{fill}]")
+		if $pack{fill} and $pack{fill} =~ /^[xy]$/;
 	
 	# It looks like the widget wants to be packed by the Container. Good.
 	# Next we'll replace these fields in the hash with normal packer values,
 	# so we copy them to seperate scalars first.
-	my $pack_side = $pack->{side};
-	my $pack_fill = 1 if $pack->{fill} eq '1';
+	my $pack_side = $pack{side};
+	my $pack_fill = 1 if $pack{fill} and $pack{fill} eq '1';
 	
 	# Construct the correct pack arguments based on $pack_side and $pack_fill
 	my $pack_abs = abs_from_pair($self->packChildrenAbsolute, $pack_side);
-	$pack->{side} = side_string_for_abs($pack_abs);
-	$pack->{fill} = fill_string_for_abs($pack_abs) if $pack_fill;
+	$pack{side} = side_string_for_abs($pack_abs);
+#print "Pack_fill was $pack_fill\n";
+	$pack{fill} = fill_string_for_abs($pack_abs) if $pack_fill;
+#print "Packing with fill $pack{fill}\n";
 	
 	# Build the widget (note we've manipulated $args{pack} throughout)
-	my $widget = $self->Prima::Widget::insert($class_name, %args);
+	my $widget = $self->Prima::Widget::insert($class_name, %args, pack => \%pack);
 	
 	# Finally, store these settings in the newly created widget's hash so we
 	# can repack later, if necessary:
