@@ -101,9 +101,7 @@ sub insert {
 	# Construct the correct pack arguments based on $pack_side and $pack_fill
 	my $pack_abs = abs_from_pair($self->packChildrenAbsolute, $pack_side);
 	$pack{side} = side_string_for_abs($pack_abs);
-#print "Pack_fill was $pack_fill\n";
 	$pack{fill} = fill_string_for_abs($pack_abs) if $pack_fill;
-#print "Packing with fill $pack{fill}\n";
 	
 	# Build the widget (note we've manipulated $args{pack} throughout)
 	my $widget = $self->Prima::Widget::insert($class_name, %args, pack => \%pack);
