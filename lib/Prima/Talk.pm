@@ -340,6 +340,10 @@ sub print_current_slide {
 	}
 	unlink $filename if -f $filename;
 	
+	my $scaling_ratio = 72.27 / 100;
+	my $width = $self->{aspect_container}->width * $scaling_ratio;
+	my $height = $self->{aspect_container}->height * $scaling_ratio;
+	
 print "Creating postscript canvas to save to $filename\n";
 	# Create the postscript canvas
 	my $ps = Prima::PS::Drawable-> create( onSpool => sub {
@@ -347,11 +351,13 @@ print "Creating postscript canvas to save to $filename\n";
 			print $fh $_[1];
 			close $fh;
 		},
-		pageSize => [$self->{aspect_container}->size],
+		pageSize => [$width, $height],
 		pageMargins => [0, 0, 0, 0],
+		isEPS => 1,
+		useDeviceFontsOnly => 1,
 	);
-	$ps->resolution($self->resolution);
-	$ps->font(size => 16);
+	$ps->resolution($self->{aspect_container}->resolution);
+	$ps->font(height => $self->{aspect_container}->font->height);
 	
 print "Initializing the canvas\n";
 	# Initialize the canvas
