@@ -1562,7 +1562,6 @@ Grows the table of contents by the given number of labels.
 
 =cut
 
-use Prima::PodView;   # Need this for the hand icon
 sub grow_toc {
 	my ($self, $n_to_add) = @_;
 	my $toc_widget = $self->{toc_widget};
@@ -1595,7 +1594,6 @@ sub grow_toc {
 			},
 			width => $toc_width,
 			valignment => ta::Middle,
-			pointer => $Prima::PodView::handIcon,
 			color => $self->{toc_color},
 			backColor => $self->{toc_backColor},
 			font => \%font_hash,
