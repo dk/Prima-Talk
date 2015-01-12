@@ -1507,9 +1507,9 @@ sub slide {
 		$slides[$self->{curr_slide}]->tear_down;
 	}
 	
-	# Set up this slide and save the current slide number
-	$slides[$number]->setup;
+	# Set the current slide number and call setup.
 	$self->{curr_slide} = $number;
+	$slides[$number]->setup;
 	
 	# Update the table of contents and footer
 	$self->update_toc;
