@@ -3108,6 +3108,7 @@ Note: The size of the latex does B<not> change
 =cut
 
 use Digest::MD5 qw(md5_hex);
+use File::Spec;
 sub render_tex {
 	my ($self, $content, $container) = @_;
 	
@@ -3126,8 +3127,11 @@ sub render_tex {
 	my $packages = delete $content{packages} || '';
 	my $tex = delete $content{tex};
 	
+	# make sure we have a cache diretory
+	mkdir 'tex-cache' unless -d 'tex-cache';
+	
 	# Build the cache name
-	my $cache_name = 'latex-' . md5_hex($packages . $tex) . '.png';
+	my $cache_name = File::Spec->catfile('tex-cache', md5_hex($packages . $tex) . '.png');
 	
 	# Create the png image if the file does not already exist
 	unless (-f $cache_name) {
@@ -3154,6 +3158,8 @@ sub render_tex {
 			system('convert', '-density', '1600', '_tmp.ps', '-flatten', $cache_name);
 			return unless -f $cache_name;
 			unlink '_tmp.ps';
+			unlink '_tmp.aux';
+			unlink '_tmp.log';
 			1;
 		} or do {
 			carp("Unable to render latex");
