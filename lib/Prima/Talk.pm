@@ -2787,6 +2787,31 @@ sub get_alignment_for {
 
 sub render_title {
 	my ($self, $title, $container) = @_;
+	
+	# Adjust the title label's font height so that the text fits
+	my $slide_deck = $self->slide_deck;
+	my $tl = $slide_deck->{title_label};
+	
+	# Find a font size that works, starting with the default
+	my $next_h;
+	$tl->begin_paint_info; {
+		my ($w, $font_height) = $tl->size;
+		my $big_h = $font_height;
+		my $small_h = 1;
+		$next_h = int(($big_h + $small_h)/2);
+		while($big_h != $next_h and $small_h != $next_h) {
+			$tl->font->height($next_h);
+			if ($tl->get_text_width($title) > $w) {
+				$big_h = $next_h;
+			}
+			else {
+				$small_h = $next_h;
+			}
+			$next_h = int(($big_h + $small_h)/2);
+		}
+	} $tl->end_paint_info;
+	$tl->font->height($next_h);
+	
 	# Note that the title (and toc) is spellchecked by setup()
 	$self->slide_deck->set_title($title);
 }
