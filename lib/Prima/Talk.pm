@@ -3234,7 +3234,7 @@ sub render_image {
 	# Utilize image file caching and render a paragraph with the image file
 	# name if it fails
 	if (exists $content{filename}) {
-		my $filename = delete $content->{filename};
+		my $filename = delete $content{filename};
 		$content{image} = $self->get_image($filename)
 			or return $self->render_par({text => $filename, %content}, $container);
 	}
