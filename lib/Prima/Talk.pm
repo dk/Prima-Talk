@@ -2518,7 +2518,7 @@ discussed in greater depth below.
 
 XXX Put this somewhere more useful
 
-Furthermore, Prima::Talk::animation provides a convenient mechanism for
+Furthermore, Prima::Talk::animate provides a convenient mechanism for
 calling a subroutine a fixed number of times in sequence.
 
 =cut
@@ -2552,6 +2552,15 @@ sub init {
 	if (not Prima::Container::Role::name_for($self->{packChildren})) {
 		carp("Unknown slide packing direction $self->{packChildren}");
 		$self->{packChildren} = cp::FromTop;
+	}
+	
+	if (exists $self->{timers}) {
+		carp("Timers should be rendered as content, not as arguments to the constructor");
+		croak('Timers should be in an arrayref')
+			unless ref($self->{timers}) and ref($self->{timers}) eq ref([]);
+	}
+	else {
+		$self->{timers} = [];
 	}
 
 	# gripe if they don't have content
@@ -3329,6 +3338,216 @@ sub render_subref {
 	$content->($self, $container);
 }
 
+=item timer
+
+Creates a timer and begins running it. Expects either a subref, a string to be
+C<eval>'d as code within a subref, or a hashref of arguments for a
+L<Prima::Timer> including C<timeout> and C<onTick>. In addition to the usual
+Timer properties, you can also include the C<start> key, indicating that the
+timer should start running as soon as the slide is rendered (defaults to true).
+The C<name> key is also given additional handling compared with the usual
+approach so that it can be accessed as a method name on the slide object, just
+like any other named content. You can specify runtime exception handling with
+the C<exception> key.
+
+If you supply a subref as the argument, or as the value for C<onTick>, the
+subref will be called with I<two> arguments, the timer object I<and> the slide
+object. (Normally, onTick callbacks are just called with the timer object. If it
+didn't do this, you would need to have a lexically scoped variable referring to
+your slide object, making things more complicated than they need to be.) An
+example subref might look like this:
+
+ sub my_onTick {
+     my ($self, $slide) = @_;
+     print "Hello from timer object $self on slide object $slide\n";
+ }
+
+On the other hand, if you provide a string instead of a subref, the string is
+eval'd as the body of a subroutine with the following form:
+
+ sub my_onTick {
+     my ($self, $slide) = @_;
+     <your code here>
+ }
+
+This means that you will have access to the slide and the timer objects under
+the given variable names. This helps you write short, succinct callbacks. This
+comes with drawbacks, however. Your code will be C<eval>'d in the
+C<Prima::Talk::Slide> package, so you will need to explicitly write out the
+package names of functions you want to call if they are not slide methods.
+Furthermore, the code is not evaluated until runtime, so you will not have the
+benefits of compile-time warnings and errors for string-based callbacks.
+
+There is nothing worse than a talk that suddenly terminates in the middle of
+your presentation! To help alleviate this problem, timers created explicitly as
+slide content are destroyed as the first step of slide tear-down. In addition,
+you can specify how you want to handle runtime exceptions thrown by your timer
+function. (This happens more readily than you might expect, primarily when
+operating on an object that has been destroyed during a slide transition.)
+Predefined options for the C<exception> key (prefixed with C<eh::> for
+"exception handler") include
+
+=over
+
+=item eh::warn
+
+Prints a warning about the failure to C<STDOUT> and discards the exception.
+
+=item eh::stop
+
+Stops the timer and discards the exception.
+
+=item eh::continue
+
+Lets the timer continue running and discards the exception.
+
+=item eh::ignore
+
+Silently ignores and discards the exception.
+
+=item eh::none
+
+No exception handling; any failures will propogate up the call stack.
+
+=back
+
+You can bitwise OR these options together. Since C<eh::stop> and C<eh::continue>
+imply C<eh::ignore>, it really only makes sense to combine the timer handling
+behavior with C<eh::warn>, such as
+
+  exception => eh::warn | eh::stop
+
+which happens to be the default exception handler. Also note that C<eh::stop>
+takes precedence over C<eh::continue>, C<eh::warn> takes precedence over
+C<eh::ignore>, and any of these override C<eh::none>.
+
+If combinations of these options do not provide enough functionality, you should
+use the C<eh::none> handler and write your own exception handling in your
+timer's callback function.
+
+=cut
+
+sub eh::none {0}
+sub eh::ignore {1}
+sub eh::warn {2}
+sub eh::continue {4}
+sub eh::stop {8}
+
+sub render_timer {
+	my ($self, $content, $container) = @_;
+	my %args;
+	if (not ref($content) or ref($content) eq ref(sub{})) {
+		# A subref, or string to be eval'd
+		%args = (onTick => $content);
+	}
+	elsif (ref($content) eq ref({})) {
+		# hashref with args
+		%args = %$content;
+	}
+	elsif (ref($content) eq ref([])) {
+		# arrayref with args. Named content won't be registered as such.
+		%args = @$content;
+		carp('Arguments for named timers should be specified in hashrefs so they can be accessed by name')
+			if exists $args{name};
+	}
+	# Default to starting immediately and warning+stopping on exceptions
+	$args{start} = 1 unless exists $args{start};
+	$args{exception} = eh::warn | eh::stop unless exists $args{exception};
+	
+	# Warn if there is no onTick callback
+	carp('Timer rendered without onTick?') unless exists $args{onTick};
+	
+	############################
+	# Wrap the onTick callback #
+	############################
+	
+	my $code = $args{onTick};
+	if (not ref($code)) {
+		# String, so produce a subref using a string eval.
+		
+		# Include exception handling if so desired.
+		if ($args{exception}) {
+			if ($args{exception} == eh::ignore) {
+				# Ignoring exceptions simply means wrapping it in an eval block
+				$code = "eval { $code }";
+			}
+			else {
+				# Do something in response to exceptions:
+				$code = "eval {
+							$code;
+							1;
+						} or do {";
+				if ($args{exception} & eh::warn) {
+					my $name = ' ';
+					$name .= $args{name} if exists $args{name};
+					$code .= "print \"Timer$name issued excpetion: \$@\n\";";
+				}
+				if ($args{exception} & eh::stop) {
+					$code .= "\$self->stop;\n";
+				}
+				$code .= "};";
+			}
+		}
+		
+		# All set, build it
+		my $slide = $self;
+		$args{onTick} = eval qq{
+			sub {
+				my (\$self) = \@_;
+				$code
+			}
+		} or do {
+			carp("Unable to produce subref from code {$code}; replacing with no-op");
+			$args{onTick} = sub{};
+		};
+	}
+	elsif (ref($code) eq ref(sub{})) {
+		# Subref, so wrap in a sub that closes over the slide.
+		
+		if ($args{exception} == eh::none) {
+			# No exception handling
+			$args{onTick} = sub {
+				push @_, $self;
+				goto &$code;
+			};
+		}
+		elsif ($args{exception} == eh::ignore) {
+			# Silently ignore exceptions
+			$args{onTick} = sub {  eval { $code->(@_, $self) } };
+		}
+		else {
+			# Add basic exception handling
+			$args{onTick} = sub {
+				eval {
+					$code->(@_, $self);
+					1;
+				} or do {
+					my ($timer) = @_;
+					if ($args{exception} & eh::warn) {
+						my $name = ' ';
+						$name .= $args{name} if exists $args{name};
+						warn "Timer$name issued excpetion: $@\n";
+					}
+					$timer->stop if $args{exception} & eh::stop;
+				};
+			};
+		}
+	}
+	else {
+		carp("Weird onTick; replacing with no-op");
+		$args{onTick} = sub{};
+	}
+	
+	# Pull off the start parameter
+	my $should_start = delete $args{start};
+	
+	# Build the timer and add it to the timers list
+	my $timer = Prima::Timer->new(%args);
+	push @{$self->{timers}}, $timer;
+	
+	# Kick it off if so requested.
+	$timer->start if $should_start;
+}
 
 =item bullets
 
@@ -3611,11 +3830,15 @@ sub transition {
 sub tear_down {
 	my $self = shift;
 	
+	# Stop and remove
+	$_->destroy foreach (@{$self->{timers}});
+	
 	# Call the supplied tear-down method
 	$self->{tear_down}->($self)
 		if exists $self->{tear_down}
 		and ref($self->{tear_down}) eq ref( sub{} );
 	
+	# Clear out the notes
 	if (Prima::Object::alive($self->slide_deck->notes_window)) {
 		$_->destroy
 			foreach (reverse $self->slide_deck->notes_window->get_components)
