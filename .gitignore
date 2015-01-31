@@ -3,3 +3,4 @@ blib/
 Build
 *META*
 _build/
+tex-cache
