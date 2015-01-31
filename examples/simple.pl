@@ -118,40 +118,22 @@ $talk->add(Slide =>
 $talk->add(Section =>
 	title => 'Section section',
 	content => 'A Subtitle!',
-	transition_counter => 0,
-	transition_content => [
-		par => 'Another paragraph',
-		par => 'And yet another!',
+	transitions => [
+		# Zeroeth transition does not need to render anything
+		sub {},
+		sub {
+			my $self = shift;
+			$self->render_content($self->slide_deck->container,
+				par => 'Another paragraph',
+			);
+		},
+		sub {
+			my $self = shift;
+			$self->render_content($self->slide_deck->container,
+				par => 'And yet another!',
+			);
+		},
 	],
-	transition => sub {
-		my ($self, $direction) = @_;
-		my $counter = $self->{transition_counter};
-		my @content = @{$self->{transition_content}};
-		
-		# First, do we have any more transitioning to do in this direction?
-		return 0 if $direction < 0 and $counter == 0;
-		return 0 if $direction > 0 and $counter == @content;
-		
-		# If we're here, we're ready to render or remove the latest content
-		if ($direction > 0) {
-			$self->render_content($self->slide_deck->container, 
-				@content[$counter, $counter+1]);
-			$self->{transition_counter} += 2;
-		}
-		else {
-			my @components = $self->slide_deck->container->get_components;
-			$components[-1]->destroy;
-			$self->{transition_counter} -= 2;
-		}
-		return 1;
-	},
-	tear_down => sub {
-		# tear-down needs to reset the transition_counter. However, all the
-		# component removal was already handled.
-#		print "Calling tear-down\n";
-		my $self = shift;
-		$self->{transition_counter} = 0;
-	},
 );
 
 

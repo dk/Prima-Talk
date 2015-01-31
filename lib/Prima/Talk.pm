@@ -2424,6 +2424,19 @@ the slide object. And finally, empty hashrefs are allowed, so you could just
 as well replace the empty coderefs with empty hashrefs and achieve the same
 end.
 
+The example of changing the font face is probably overkill unless you're
+writing a highly choreographed talk. What is more often the case is that you
+want to remove some of your slide content and replace it with something else.
+For this sort of thing, use slide methods C<render_content> and
+C<clear_content>. The first method adds content to a container (which may
+already contain some material), and the second removes all material from a
+container. Both of these methods both expect a container for the first
+argument. Content rendering then expects the sort of key/value pair collection
+that you would have in your C<content> key for a slide. If you want to use
+C<clear_content> to remove only some of the elements of a slide, you should
+probably create a sub-container for that portion of the slide. You can then
+clear and add material to that sub-container using these methods.
+
 I mentioned already that the set of transitions always starts with the first
 transition. You can think of each slide as its own sort of mini-slideshow.
 Each time you land on a slide, it I<starts> the mini-slideshow from the
@@ -2670,7 +2683,7 @@ sub setup {
 	# rendering commands if necessary.
 	$self->slide_deck->focus(1);
 	
-	# Add some padding
+	# XXX do this better!!!! Add some padding
 	$container->insert(Widget =>
 		width => 5,
 		pack => { side => 'left', fill => 'y' },
@@ -2778,6 +2791,14 @@ sub render_content {
 			$self->{stash}->{$stuff->{name}} = $rendered_content;
 		}
 	}
+}
+
+sub clear_content {
+	my ($self, $container) = @_;
+	croak('clear_content called without a container to clear!')
+		unless defined $container;
+	
+	$_->destroy foreach (reverse $container->get_components)
 }
 
 sub alignment {
@@ -3839,16 +3860,14 @@ sub tear_down {
 		and ref($self->{tear_down}) eq ref( sub{} );
 	
 	# Clear out the notes
-	if (Prima::Object::alive($self->slide_deck->notes_window)) {
-		$_->destroy
-			foreach (reverse $self->slide_deck->notes_window->get_components)
-	}
+	$self->clear_content($self->slide_deck->notes_window)
+		if Prima::Object::alive($self->slide_deck->notes_window);
 	
 	# Clear the stash
 	$self->{stash} = {};
 	
 	# Finish by removing the widgets
-	$_->destroy foreach (reverse $self->slide_deck->container->get_components);
+	$self->clear_content($self->slide_deck->container);
 }
 
 package Prima::Talk::WideSlide;
